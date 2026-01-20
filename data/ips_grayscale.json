@@ -1,0 +1,26 @@
+{
+  "ips": [
+    {
+      "name": "初音ミク",
+      "name_en": "Hatsune Miku",
+      "name_cn": "初音未来",
+      "category": "vocaloid",
+      "tags": ["vocaloid", "crypton", "figure"],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/0f/7c/469803_2x88P.jpg",
+      "external_id": "8394",
+      "weight": 1.0,
+      "notes": "Grayscale test IP #1 - High volume, stable market"
+    },
+    {
+      "name": "葬送のフリーレン",
+      "name_en": "Frieren: Beyond Journey's End",
+      "name_cn": "葬送的芙莉莲",
+      "category": "anime",
+      "tags": ["fantasy", "popular"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/1015/138006.jpg",
+      "external_id": "52991",
+      "weight": 1.5,
+      "notes": "Grayscale test IP #2 - Trending anime"
+    }
+  ]
+}

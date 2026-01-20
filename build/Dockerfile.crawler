@@ -1,0 +1,65 @@
+# build/Dockerfile.crawler
+# Crawler Worker - Headless browser crawling service
+
+# Stage 1: Build
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /app
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build crawler binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s" \
+    -o /app/bin/crawler \
+    ./cmd/crawler
+
+# Stage 2: Runtime with Chromium
+FROM alpine:3.19
+
+# Install Chromium and dependencies
+RUN apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    chromium \
+    nss \
+    freetype \
+    harfbuzz \
+    ttf-freefont \
+    font-noto-cjk \
+    && rm -rf /var/cache/apk/*
+
+# Create non-root user
+RUN addgroup -g 1000 animetop && \
+    adduser -u 1000 -G animetop -s /bin/sh -D animetop
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/bin/crawler /app/crawler
+
+# Copy config template
+COPY --from=builder /app/configs/ /app/configs/
+
+# Set ownership
+RUN chown -R animetop:animetop /app
+
+# Create directories for screenshots (debug mode)
+RUN mkdir -p /app/screenshots && chown animetop:animetop /app/screenshots
+
+USER animetop
+
+# Environment variables for Chromium
+ENV CHROME_BIN=/usr/bin/chromium-browser
+ENV CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
+
+# Default command
+ENTRYPOINT ["/app/crawler"]
+CMD ["-config", "/app/configs/config.json"]

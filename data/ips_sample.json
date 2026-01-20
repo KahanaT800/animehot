@@ -1,0 +1,114 @@
+{
+  "ips": [
+    {
+      "name": "初音ミク",
+      "name_en": "Hatsune Miku",
+      "name_cn": "初音未来",
+      "category": "vocaloid",
+      "tags": ["vocaloid", "crypton", "figure"],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/0f/7c/469803_2x88P.jpg",
+      "external_id": "8394",
+      "weight": 1.0,
+      "notes": "Grayscale test IP #1 - High volume, stable market"
+    },
+    {
+      "name": "葬送のフリーレン",
+      "name_en": "Frieren: Beyond Journey's End",
+      "name_cn": "葬送的芙莉莲",
+      "category": "anime",
+      "tags": ["fantasy", "popular"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/1015/138006.jpg",
+      "external_id": "52991",
+      "weight": 0.5,
+      "notes": "Grayscale test IP #2 - Trending anime"
+    },
+    {
+      "name": "ちいかわ",
+      "name_en": "Chiikawa",
+      "name_cn": "吉伊卡哇",
+      "category": "character",
+      "tags": ["mascot", "plush", "trending"],
+      "image_url": "https://www.anime-chiikawa.jp/images/sliders/kv_01.jpg",
+      "external_id": "51246",
+      "weight": 2.0,
+      "notes": "【压力测试用】当前日本线下线上交易量Top级，需注意防范过多请求导致的风控。"
+    },
+    {
+      "name": "呪術廻戦",
+      "name_en": "Jujutsu Kaisen",
+      "name_cn": "咒术回战",
+      "category": "anime",
+      "tags": ["shonen", "jumpshop", "figure", "goods"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/1171/109222.jpg",
+      "external_id": "40748",
+      "weight": 2.0,
+      "notes": "Jump系顶流，出货量大，由于近期完结，可能会观测到明显的抛售潮（Outflow spike）。"
+    },
+    {
+      "name": "ブルーロック",
+      "name_en": "Blue Lock",
+      "name_cn": "蓝色监狱",
+      "category": "anime",
+      "tags": ["sports", "female-oriented", "acrylic-stand"],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/b4/db/341163_l525N.jpg",
+      "external_id": "49596",
+      "weight": 2.0,
+      "notes": "女性向“谷子”经济的代表，单价低、流速快，非常适合测试小时级的流动性变化。"
+    },
+    {
+      "name": "ワンピース",
+      "name_en": "One Piece",
+      "name_cn": "航海王/海贼王",
+      "category": "anime",
+      "tags": ["shonen", "card", "figure", "classic"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/6/73245.jpg",
+      "external_id": "21",
+      "weight": 2.0,
+      "notes": "常青树参照组，用于校准市场整体的日夜活跃周期。"
+    },
+    {
+      "name": "推しの子",
+      "name_en": "Oshi no Ko",
+      "name_cn": "我推的孩子",
+      "category": "anime",
+      "tags": ["idol", "suspense", "popular"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/1812/134736.jpg",
+      "external_id": "52034",
+      "weight": 0.5,
+      "notes": "具有强烈的季度热度特征，适合观察第二季开播前后的热度攀升。"
+    },
+    {
+      "name": "原神",
+      "name_en": "Genshin Impact",
+      "name_cn": "原神",
+      "category": "game",
+      "tags": ["game", "mihoyo", "cosplay", "goods"],
+      "image_url": "https://upload.wikimedia.org/wikipedia/zh/9/94/Genshin_Impact.jpg",
+      "external_id": "52923",
+      "weight": 1.0,
+      "notes": "游戏类IP代表，除了周边外，Cosplay道具交易也很活跃，数据维度较丰富。"
+    },
+    {
+      "name": "ハイキュー!!",
+      "name_en": "Haikyuu!!",
+      "name_cn": "排球少年",
+      "category": "anime",
+      "tags": ["sports", "jump", "movie"],
+      "image_url": "https://cdn.myanimelist.net/images/anime/7/76014.jpg",
+      "external_id": "20583",
+      "weight": 2.0,
+      "notes": "剧场版效应非常明显，且粉丝黏性极高，即使完结很久依然有高流动性。"
+    },
+    {
+      "name": "ホロライブ",
+      "name_en": "Hololive",
+      "name_cn": "Hololive",
+      "category": "vtuber",
+      "tags": ["vtuber", "idol", "youtube"],
+      "image_url": "https://hololive.hololivepro.com/wp-content/uploads/2023/09/Minato-Aqua_megane_01.png",
+      "external_id": "44042",
+      "weight": 1.0,
+      "notes": "Vtuber代表。注意：此类商品通常带有特定的成员名，搜索结果可能需要更细的关键词清洗。"
+    }
+  ]
+}

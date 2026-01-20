@@ -1,0 +1,345 @@
+# docker-compose.prod.yml
+# Anime Hot - Production Stack
+#
+# 使用方法:
+# 1. 首次部署: ./deploy/certbot/init-letsencrypt.sh
+# 2. 正常启动: docker compose -f docker-compose.prod.yml up -d
+# 3. 启用监控: docker compose -f docker-compose.prod.yml --profile monitoring up -d
+
+services:
+  # =============================================================================
+  # Nginx - SSL 终止 + 反向代理
+  # =============================================================================
+
+  nginx:
+    image: nginx:alpine
+    container_name: animehot-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    depends_on:
+      analyzer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - animehot-net
+
+  # =============================================================================
+  # Certbot - SSL 证书管理
+  # =============================================================================
+
+  certbot:
+    image: certbot/certbot
+    container_name: animehot-certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    # 每12小时检查证书续期
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - animehot-net
+
+  # =============================================================================
+  # Infrastructure - 内部网络，不对外暴露端口
+  # =============================================================================
+
+  mysql:
+    image: mysql:8.0
+    container_name: animehot-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-animetop}
+      MYSQL_USER: ${MYSQL_USER:-animetop}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      TZ: Asia/Tokyo
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - animehot-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: animehot-redis
+    restart: always
+    command:
+      [
+        "redis-server",
+        "--bind", "0.0.0.0",
+        "--protected-mode", "no",
+        "--appendonly", "yes",
+        "--maxmemory", "256mb",
+        "--maxmemory-policy", "allkeys-lru"
+      ]
+    environment:
+      TZ: Asia/Tokyo
+    ports:
+      # 暴露给 Tailscale 内网，供本地爬虫连接
+      - "${TAILSCALE_IP:-100.99.127.100}:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - animehot-net
+
+  # =============================================================================
+  # Application Services
+  # =============================================================================
+
+  analyzer:
+    image: ${ANALYZER_IMAGE:-ghcr.io/kahanat800/animehot/analyzer:latest}
+    container_name: animehot-analyzer
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # App
+      APP_ENV: prod
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-info}
+      APP_HTTP_ADDR: ":8080"
+      APP_METRICS_ADDR: ":2112"
+      APP_WORKER_POOL_SIZE: ${APP_WORKER_POOL_SIZE:-4}
+      DEBUG: "false"
+      AUTO_MIGRATE: "true"
+      TZ: Asia/Tokyo
+
+      # Database
+      DB_DSN: "${MYSQL_USER:-animetop}:${MYSQL_PASSWORD}@tcp(mysql:3306)/${MYSQL_DATABASE:-animetop}?charset=utf8mb4&parseTime=True&loc=Local"
+
+      # Redis
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+
+      # Scheduler
+      SCHEDULER_BASE_INTERVAL: ${SCHEDULER_BASE_INTERVAL:-1h}
+      SCHEDULER_MIN_INTERVAL: ${SCHEDULER_MIN_INTERVAL:-15m}
+      SCHEDULER_MAX_INTERVAL: ${SCHEDULER_MAX_INTERVAL:-1h}
+      SCHEDULER_PAGES_ON_SALE: ${SCHEDULER_PAGES_ON_SALE:-3}
+      SCHEDULER_PAGES_SOLD: ${SCHEDULER_PAGES_SOLD:-3}
+
+      # Janitor
+      JANITOR_INTERVAL: ${JANITOR_INTERVAL:-10m}
+      JANITOR_TIMEOUT: ${JANITOR_TIMEOUT:-30m}
+
+      # Analyzer
+      ANALYZER_SNAPSHOT_TTL: ${ANALYZER_SNAPSHOT_TTL:-48h}
+      ANALYZER_HIGH_OUTFLOW_THRESHOLD: ${ANALYZER_HIGH_OUTFLOW_THRESHOLD:-50}
+      ANALYZER_LOW_LIQUIDITY_THRESHOLD: ${ANALYZER_LOW_LIQUIDITY_THRESHOLD:-0.3}
+      ANALYZER_HIGH_LIQUIDITY_THRESHOLD: ${ANALYZER_HIGH_LIQUIDITY_THRESHOLD:-2.0}
+
+      # Admin API Key
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+
+      # Web Frontend
+      STATIC_DIR: /app/web
+      ENABLE_CORS: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8080"
+      - "2112"
+    volumes:
+      - ./web:/app/web:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - animehot-net
+
+  crawler:
+    image: ${CRAWLER_IMAGE:-ghcr.io/kahanat800/animehot/crawler:latest}
+    container_name: animehot-crawler
+    restart: always
+    stop_grace_period: 2m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # App
+      APP_ENV: prod
+      DEBUG: "false"
+      TZ: Asia/Tokyo
+
+      # Redis
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+
+      # Rate Limit
+      APP_RATE_LIMIT: ${APP_RATE_LIMIT:-2}
+      APP_RATE_BURST: ${APP_RATE_BURST:-5}
+
+      # Browser
+      CHROME_BIN: "/usr/bin/chromium-browser"
+      BROWSER_BIN_PATH: "/usr/bin/chromium-browser"
+      BROWSER_HEADLESS: "true"
+      BROWSER_MAX_CONCURRENCY: ${BROWSER_MAX_CONCURRENCY:-2}
+      BROWSER_MAX_FETCH_COUNT: ${BROWSER_MAX_FETCH_COUNT:-50}
+      BROWSER_PAGE_TIMEOUT: ${BROWSER_PAGE_TIMEOUT:-60s}
+      BROWSER_DEBUG_SCREENSHOT: "false"
+
+      # Crawler
+      MAX_TASKS: ${MAX_TASKS:-50}
+      PROXY_AUTO_SWITCH: "false"
+      HTTP_PROXY: ${HTTP_PROXY:-}
+
+      # Metrics
+      APP_METRICS_ADDR: ":2112"
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "2112"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2112 || exit 0"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    tmpfs:
+      - /tmp:mode=1777,exec
+    networks:
+      - animehot-net
+
+  # =============================================================================
+  # Monitoring - Grafana Cloud (可选)
+  # =============================================================================
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: animehot-redis-exporter
+    restart: always
+    profiles: ["monitoring"]
+    environment:
+      REDIS_ADDR: redis:6379
+      TZ: Asia/Tokyo
+    networks:
+      - animehot-net
+
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: animehot-mysql-exporter
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - '--mysqld.username=root'
+      - '--mysqld.address=mysql:3306'
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Tokyo
+    networks:
+      - animehot-net
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: animehot-alloy
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - run
+      - /etc/alloy/config.river
+    environment:
+      TZ: Asia/Tokyo
+      GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL: ${GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL}
+      GRAFANA_CLOUD_PROM_USERNAME: ${GRAFANA_CLOUD_PROM_USERNAME}
+      GRAFANA_CLOUD_PROM_API_KEY: ${GRAFANA_CLOUD_PROM_API_KEY}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL}
+      GRAFANA_CLOUD_LOKI_USERNAME: ${GRAFANA_CLOUD_LOKI_USERNAME}
+      GRAFANA_CLOUD_LOKI_API_KEY: ${GRAFANA_CLOUD_LOKI_API_KEY}
+      HOSTNAME: ${HOSTNAME:-animehot-prod}
+    volumes:
+      - ./deploy/alloy/config.river:/etc/alloy/config.river:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    depends_on:
+      - analyzer
+      - redis-exporter
+      - mysql-exporter
+      - cadvisor
+      - node-exporter
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - animehot-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    container_name: animehot-cadvisor
+    restart: always
+    profiles: ["monitoring"]
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - animehot-net
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    container_name: animehot-node-exporter
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/host/root'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    networks:
+      - animehot-net
+
+# =============================================================================
+# Networks & Volumes
+# =============================================================================
+
+networks:
+  animehot-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  certbot_www:
+  certbot_certs:

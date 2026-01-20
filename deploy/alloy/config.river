@@ -1,0 +1,130 @@
+// Grafana Alloy Configuration for Animetop
+// Collects metrics and logs, pushes to Grafana Cloud
+
+// =============================================================================
+// Prometheus Metrics Collection
+// =============================================================================
+
+// Scrape analyzer metrics
+prometheus.scrape "analyzer" {
+  targets = [{
+    __address__ = "analyzer:2112",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-analyzer"
+}
+
+// Scrape crawler metrics
+prometheus.scrape "crawler" {
+  targets = [{
+    __address__ = "crawler:2112",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-crawler"
+}
+
+// Scrape Redis exporter
+prometheus.scrape "redis" {
+  targets = [{
+    __address__ = "redis-exporter:9121",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-redis"
+}
+
+// Scrape MySQL exporter
+prometheus.scrape "mysql" {
+  targets = [{
+    __address__ = "mysql-exporter:9104",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-mysql"
+}
+
+// Scrape cAdvisor (container metrics)
+prometheus.scrape "cadvisor" {
+  targets = [{
+    __address__ = "cadvisor:8080",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-cadvisor"
+}
+
+// Scrape Node exporter (host metrics)
+prometheus.scrape "node" {
+  targets = [{
+    __address__ = "node-exporter:9100",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-node"
+}
+
+// Remote write to Grafana Cloud
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_PROM_USERNAME")
+      password = env("GRAFANA_CLOUD_PROM_API_KEY")
+    }
+  }
+  external_labels = {
+    hostname = env("HOSTNAME"),
+    env = "production",
+  }
+}
+
+// =============================================================================
+// Loki Logs Collection
+// =============================================================================
+
+// Discover Docker containers
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+// Relabel container labels
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "service"
+  }
+}
+
+// Collect logs from containers
+loki.source.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.containers.output
+  forward_to = [loki.write.grafana_cloud.receiver]
+  relabel_rules = discovery.relabel.containers.rules
+}
+
+// Write logs to Grafana Cloud Loki
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_LOKI_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_LOKI_USERNAME")
+      password = env("GRAFANA_CLOUD_LOKI_API_KEY")
+    }
+  }
+  external_labels = {
+    hostname = env("HOSTNAME"),
+    env = "production",
+  }
+}

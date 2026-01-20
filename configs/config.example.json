@@ -1,0 +1,51 @@
+{
+  "app": {
+    "env": "prod",
+    "log_level": "info",
+    "http_addr": ":8080",
+    "metrics_addr": ":2112",
+    "worker_pool_size": 10,
+    "queue_capacity": 100,
+    "rate_limit": 2,
+    "rate_burst": 5,
+    "max_tasks": 0,
+    "proxy_cooldown": 600000000000,
+    "proxy_failure_threshold": 10,
+    "proxy_auto_switch": false
+  },
+  "scheduler": {
+    "base_interval": 3600000000000,
+    "min_interval": 900000000000,
+    "max_interval": 14400000000000,
+    "batch_size": 50,
+    "janitor_interval": 600000000000,
+    "janitor_timeout": 1800000000000,
+    "backpressure_threshold": 5
+  },
+  "analyzer": {
+    "snapshot_ttl": 172800000000000,
+    "stats_retention": 2592000000000000,
+    "alert_threshold": 0.3,
+    "trend_window_size": 24
+  },
+  "mysql": {
+    "dsn": "animetop:animetop_pass@tcp(mysql:3306)/animetop?charset=utf8mb4&parseTime=True&loc=Local"
+  },
+  "redis": {
+    "addr": "redis:6379",
+    "password": ""
+  },
+  "browser": {
+    "bin_path": "/usr/bin/chromium-browser",
+    "proxy_url": "",
+    "headless": true,
+    "max_concurrency": 3,
+    "max_fetch_count": 100,
+    "page_timeout": 120000000000,
+    "debug_screenshot": false,
+    "screenshot_timeout": 15000000000
+  },
+  "security": {
+    "jwt_secret": "change_me_in_production_use_strong_random_secret"
+  }
+}

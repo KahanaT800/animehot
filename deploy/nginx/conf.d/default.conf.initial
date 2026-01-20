@@ -1,0 +1,46 @@
+# deploy/nginx/conf.d/default.conf.initial
+# 初始配置 - 仅 HTTP，用于 Let's Encrypt 证书申请
+#
+# 使用方法:
+# 1. 首次部署时，将此文件复制为 default.conf
+# 2. 启动 Nginx
+# 3. 运行 certbot 获取证书
+# 4. 将 default.conf.ssl 复制为 default.conf
+# 5. 重新加载 Nginx
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN_NAME};
+
+    # Let's Encrypt ACME 验证路径
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        allow all;
+    }
+
+    # 临时: 在获取 SSL 证书前，直接代理到后端
+    # 生产环境获取证书后应切换到 SSL 配置
+    location /health {
+        proxy_pass http://analyzer:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        access_log off;
+    }
+
+    location /api/ {
+        proxy_pass http://analyzer:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        # 提示用户配置 HTTPS
+        default_type text/html;
+        return 200 '<html><body><h1>Anime Hot</h1><p>Please configure HTTPS. Run certbot to get SSL certificates.</p></body></html>';
+    }
+}

@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package crawler;
+
+option go_package = "animetop/proto/pb";
+
+// ============================================================================
+// IP 流动性分析器 - 爬虫消息定义
+// ============================================================================
+
+// 商品状态枚举
+enum ItemStatus {
+  ITEM_STATUS_ON_SALE = 0;  // 在售
+  ITEM_STATUS_SOLD = 1;     // 已售 (通过 thumbnail-sticker 判断)
+}
+
+// 爬虫请求
+// 每个 IP 生成一个请求，分别抓取在售和已售商品
+message CrawlRequest {
+  uint64 ip_id = 1;              // IP 数据库 ID (关联 ip_metadata.id)
+  string keyword = 2;            // 搜索关键词
+  string task_id = 4;            // 任务追踪 ID (UUID)
+  int64 created_at = 5;          // 任务创建时间 (Unix 时间戳秒)
+
+  // 增量抓取相关 (v1 - 锚点模式，已废弃)
+  bool is_first_crawl = 6;       // [废弃] 是否首次抓取
+  repeated string anchor_window = 7;  // [废弃] 锚点窗口
+  int32 max_pages = 8;           // [废弃] 最大翻页数
+
+  // 重试相关
+  int32 retry_count = 9;         // 已重试次数 (Janitor rescue 时递增)
+
+  // v2 - 固定页数模式 (分别抓取在售和已售)
+  int32 pages_on_sale = 10;      // 在售页数 (默认 3)
+  int32 pages_sold = 11;         // 已售页数 (默认 3)
+}
+
+// 商品信息
+message Item {
+  string source_id = 1;     // 商品源 ID (如 m123456789 或 shops_xxx)
+  string title = 2;         // 商品标题
+  int32 price = 3;          // 价格 (日元)
+  string image_url = 4;     // 商品图片 URL
+  string item_url = 5;      // 商品详情页 URL
+  ItemStatus status = 6;    // 商品状态 (通过 HTML thumbnail-sticker 判断)
+}
+
+// 爬虫响应
+message CrawlResponse {
+  uint64 ip_id = 1;              // IP 数据库 ID
+  repeated Item items = 3;       // 抓取到的商品列表 (从新到旧，在售+已售混合)
+  int32 total_found = 4;         // 页面上显示的总数 (如有)
+  string error_message = 5;      // 错误消息 (成功时为空)
+  string task_id = 6;            // 任务追踪 ID
+  int64 crawled_at = 7;          // 抓取完成时间 (Unix 时间戳秒)
+
+  // 增量抓取结果
+  bool is_first_crawl = 8;       // 是否首次抓取
+  string stopped_at_anchor = 9;  // 停止时遇到的锚点 ID (空表示未遇到锚点)
+  int32 pages_crawled = 10;      // 实际翻页数
+
+  // 重试相关
+  int32 retry_count = 11;        // 已重试次数 (继承自 CrawlRequest)
+}

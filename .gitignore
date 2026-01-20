@@ -1,0 +1,71 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/analyzer
+/crawler
+
+# Build output
+/bin/
+/dist/
+
+# Test binary
+*.test
+
+# Output of go coverage
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.prod
+.env.crawler
+*.local
+
+# Config (use config.example.json as template)
+configs/config.json
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+
+# Debug screenshots (crawler)
+/screenshots/
+!/docs/screenshots/
+
+# Claude session files
+.claude/
+CLAUDE.md
+
+# Python virtual environment
+.venv/
+
+# Generated nginx config
+deploy/nginx/conf.d/default.conf
+
+# Old project (archived)
+old/
+
+# Project planning docs (not needed in repo)
+project/
+PROJECT_PORTFOLIO.md

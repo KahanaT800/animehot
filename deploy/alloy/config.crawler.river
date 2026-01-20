@@ -1,0 +1,89 @@
+// Grafana Alloy Configuration for Local Crawler Node
+// Only scrapes local crawler metrics, pushes to Grafana Cloud
+
+// =============================================================================
+// Prometheus Metrics Collection
+// =============================================================================
+
+// Scrape local crawler metrics (host network mode, so use localhost)
+prometheus.scrape "crawler" {
+  targets = [{
+    __address__ = "localhost:2112",
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+  job_name = "animetop-crawler-local"
+}
+
+// Remote write to Grafana Cloud
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_PROM_USERNAME")
+      password = env("GRAFANA_CLOUD_PROM_API_KEY")
+    }
+  }
+  external_labels = {
+    hostname = env("HOSTNAME"),
+    env = "production",
+    node = "local",
+  }
+}
+
+// =============================================================================
+// Loki Logs Collection
+// =============================================================================
+
+// Discover Docker containers
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+// Relabel container labels
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Only keep crawler container
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = ".*crawler.*"
+    action = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "service"
+  }
+}
+
+// Collect logs from containers
+loki.source.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.relabel.containers.output
+  forward_to = [loki.write.grafana_cloud.receiver]
+  relabel_rules = discovery.relabel.containers.rules
+}
+
+// Write logs to Grafana Cloud Loki
+loki.write "grafana_cloud" {
+  endpoint {
+    url = env("GRAFANA_CLOUD_LOKI_URL")
+    basic_auth {
+      username = env("GRAFANA_CLOUD_LOKI_USERNAME")
+      password = env("GRAFANA_CLOUD_LOKI_API_KEY")
+    }
+  }
+  external_labels = {
+    hostname = env("HOSTNAME"),
+    env = "production",
+    node = "local",
+  }
+}

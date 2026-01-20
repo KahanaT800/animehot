@@ -1,0 +1,301 @@
+# docker-compose.yml
+# IP Liquidity Analyzer - Complete Stack
+
+services:
+  # =============================================================================
+  # Infrastructure
+  # =============================================================================
+
+  mysql:
+    image: mysql:8.0
+    container_name: animetop-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-animetop_root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-animetop}
+      MYSQL_USER: ${MYSQL_USER:-animetop}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-animetop_pass}
+      TZ: Asia/Tokyo
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - animetop-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: animetop-redis
+    restart: always
+    command:
+      [
+        "redis-server",
+        "--bind", "0.0.0.0",
+        "--protected-mode", "no",
+        "--appendonly", "yes",
+        "--maxmemory", "128mb",
+        "--maxmemory-policy", "allkeys-lru"
+      ]
+    environment:
+      TZ: Asia/Tokyo
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - animetop-net
+
+  # =============================================================================
+  # Application Services
+  # =============================================================================
+
+  analyzer:
+    build:
+      context: .
+      dockerfile: build/Dockerfile.analyzer
+    container_name: animetop-analyzer
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # App
+      APP_ENV: ${APP_ENV:-prod}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-info}
+      APP_HTTP_ADDR: ":8080"
+      APP_METRICS_ADDR: ":2112"
+      APP_WORKER_POOL_SIZE: ${APP_WORKER_POOL_SIZE:-2}
+      DEBUG: ${DEBUG:-false}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-true}
+      TZ: Asia/Tokyo
+
+      # Database
+      DB_DSN: "${MYSQL_USER:-animetop}:${MYSQL_PASSWORD:-animetop_pass}@tcp(mysql:3306)/${MYSQL_DATABASE:-animetop}?charset=utf8mb4&parseTime=True&loc=Local"
+
+      # Redis
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+
+      # Scheduler
+      SCHEDULER_BASE_INTERVAL: ${SCHEDULER_BASE_INTERVAL:-1h}
+      SCHEDULER_MIN_INTERVAL: ${SCHEDULER_MIN_INTERVAL:-15m}
+      SCHEDULER_MAX_INTERVAL: ${SCHEDULER_MAX_INTERVAL:-4h}
+      SCHEDULER_PAGES_ON_SALE: ${SCHEDULER_PAGES_ON_SALE:-3}
+      SCHEDULER_PAGES_SOLD: ${SCHEDULER_PAGES_SOLD:-3}
+
+      # Janitor
+      JANITOR_INTERVAL: ${JANITOR_INTERVAL:-5m}
+      JANITOR_TIMEOUT: ${JANITOR_TIMEOUT:-10m}
+
+      # Analyzer
+      ANALYZER_SNAPSHOT_TTL: ${ANALYZER_SNAPSHOT_TTL:-48h}
+      ANALYZER_HIGH_OUTFLOW_THRESHOLD: ${ANALYZER_HIGH_OUTFLOW_THRESHOLD:-50}
+      ANALYZER_LOW_LIQUIDITY_THRESHOLD: ${ANALYZER_LOW_LIQUIDITY_THRESHOLD:-0.3}
+      ANALYZER_HIGH_LIQUIDITY_THRESHOLD: ${ANALYZER_HIGH_LIQUIDITY_THRESHOLD:-2.0}
+
+      # Web Frontend
+      STATIC_DIR: ${STATIC_DIR:-/app/web}
+      ENABLE_CORS: ${ENABLE_CORS:-false}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8080}:8080"
+    expose:
+      - "2112"
+    volumes:
+      - ./configs:/app/configs:ro
+      - ./web:/app/web:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - animetop-net
+
+  crawler:
+    build:
+      context: .
+      dockerfile: build/Dockerfile.crawler
+    container_name: animetop-crawler
+    restart: always
+    stop_grace_period: 2m
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # App
+      APP_ENV: ${APP_ENV:-prod}
+      DEBUG: ${DEBUG:-false}
+      TZ: Asia/Tokyo
+
+      # Redis
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+
+      # Rate Limit
+      APP_RATE_LIMIT: ${APP_RATE_LIMIT:-2}
+      APP_RATE_BURST: ${APP_RATE_BURST:-5}
+
+      # Browser
+      CHROME_BIN: "/usr/bin/chromium-browser"
+      BROWSER_BIN_PATH: "/usr/bin/chromium-browser"
+      BROWSER_HEADLESS: "true"
+      BROWSER_MAX_CONCURRENCY: ${BROWSER_MAX_CONCURRENCY:-2}
+      BROWSER_MAX_FETCH_COUNT: ${BROWSER_MAX_FETCH_COUNT:-50}
+      BROWSER_PAGE_TIMEOUT: ${BROWSER_PAGE_TIMEOUT:-60s}
+      BROWSER_DEBUG_SCREENSHOT: ${BROWSER_DEBUG_SCREENSHOT:-false}
+
+      # Crawler
+      MAX_TASKS: ${MAX_TASKS:-50}
+      PROXY_AUTO_SWITCH: ${PROXY_AUTO_SWITCH:-false}
+      PROXY_COOLDOWN: ${PROXY_COOLDOWN:-10m}
+      PROXY_FAILURE_THRESHOLD: ${PROXY_FAILURE_THRESHOLD:-10}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+
+      # Metrics
+      CRAWLER_METRICS_ADDR: ":2112"
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "2112"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2112 || exit 0"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    tmpfs:
+      - /tmp:mode=1777,exec
+    volumes:
+      - ./configs:/app/configs:ro
+      - crawler_screenshots:/app/screenshots
+    networks:
+      - animetop-net
+
+  # =============================================================================
+  # Monitoring - Grafana Cloud (轻量化)
+  # =============================================================================
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    restart: always
+    profiles: ["monitoring"]
+    environment:
+      REDIS_ADDR: redis:6379
+      TZ: Asia/Tokyo
+    networks:
+      - animetop-net
+
+  mysql-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - '--mysqld.username=root'
+      - '--mysqld.address=mysql:3306'
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_ROOT_PASSWORD:-animetop_root}
+      TZ: Asia/Tokyo
+    networks:
+      - animetop-net
+
+  alloy:
+    image: grafana/alloy:latest
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - run
+      - /etc/alloy/config.river
+    environment:
+      TZ: Asia/Tokyo
+      GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL: ${GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL}
+      GRAFANA_CLOUD_PROM_USERNAME: ${GRAFANA_CLOUD_PROM_USERNAME}
+      GRAFANA_CLOUD_PROM_API_KEY: ${GRAFANA_CLOUD_PROM_API_KEY}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL}
+      GRAFANA_CLOUD_LOKI_USERNAME: ${GRAFANA_CLOUD_LOKI_USERNAME}
+      GRAFANA_CLOUD_LOKI_API_KEY: ${GRAFANA_CLOUD_LOKI_API_KEY}
+      HOSTNAME: ${HOSTNAME:-animetop}
+    volumes:
+      - ./deploy/alloy/config.river:/etc/alloy/config.river:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    depends_on:
+      - analyzer
+      - redis-exporter
+      - mysql-exporter
+      - cadvisor
+      - node-exporter
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - animetop-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.55.1
+    restart: always
+    profiles: ["monitoring"]
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - animetop-net
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.1
+    restart: always
+    profiles: ["monitoring"]
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/host/root'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    networks:
+      - animetop-net
+
+# =============================================================================
+# Networks & Volumes
+# =============================================================================
+
+networks:
+  animetop-net:
+    driver: bridge
+
+volumes:
+  mysql_data:
+  redis_data:
+  crawler_screenshots:

@@ -1,0 +1,255 @@
+{
+  "ips": [
+    {
+      "name": "葬送のフリーレン",
+      "name_en": "Frieren: Beyond Journey's End",
+      "name_cn": "葬送的芙莉莲",
+      "category": "anime",
+      "tags": [
+        "fantasy",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/13/c5/400602_ZI8Y9.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "呪術廻戦",
+      "name_en": "Jujutsu Kaisen",
+      "name_cn": "咒术回战",
+      "category": "anime",
+      "tags": [
+        "shonen",
+        "jump",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/60/fe/294993_JrrzK.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "ブルーロック",
+      "name_en": "Blue Lock",
+      "name_cn": "蓝色监狱/蓝锁/蓝色锁链",
+      "category": "anime",
+      "tags": [
+        "sports",
+        "female-oriented"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/b4/db/341163_l525N.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "推しの子",
+      "name_en": "Oshi no Ko",
+      "name_cn": "我推的孩子",
+      "category": "anime",
+      "tags": [
+        "idol",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/69/1e/424227_OhkuW.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "ハイキュー!!",
+      "name_en": "Haikyuu!!",
+      "name_cn": "排球少年",
+      "category": "anime",
+      "tags": [
+        "sports",
+        "jump"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/91/d8/84171_5KpYZ.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "鬼滅の刃",
+      "name_en": "Demon Slayer",
+      "name_cn": "鬼灭之刃",
+      "category": "anime",
+      "tags": [
+        "shonen",
+        "jump",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/f6/0b/501958_VZs4W.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "進撃の巨人",
+      "name_en": "Attack on Titan",
+      "name_cn": "进击的巨人",
+      "category": "anime",
+      "tags": [
+        "action",
+        "figure",
+        "classic"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/78/c9/55770_HsJfh.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "SPY×FAMILY",
+      "name_en": "SPY x FAMILY",
+      "name_cn": "间谍过家家",
+      "category": "anime",
+      "tags": [
+        "comedy",
+        "family",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/3d/79/498378_3ycrL.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "チェンソーマン",
+      "name_en": "Chainsaw Man",
+      "name_cn": "电锯人",
+      "category": "anime",
+      "tags": [
+        "action",
+        "jump",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/e0/d8/470660_uLY5M.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "薬屋のひとりごと",
+      "name_en": "The Apothecary Diaries",
+      "name_cn": "药屋少女的呢喃",
+      "category": "anime",
+      "tags": [
+        "mystery",
+        "historical",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/fe/31/420628_2ZEz0.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "Re:ゼロから始める異世界生活",
+      "name_en": "Re:Zero",
+      "name_cn": "从零开始的异世界生活",
+      "category": "anime",
+      "tags": [
+        "isekai",
+        "fantasy",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/cb/78/140001_Ew1mo.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "文豪ストレイドッグス",
+      "name_en": "Bungo Stray Dogs",
+      "name_cn": "文豪野犬",
+      "category": "anime",
+      "tags": [
+        "action",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/01/4b/144357_Lg83V.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "エヴァンゲリオン",
+      "name_en": "Evangelion",
+      "name_cn": "新世纪福音战士",
+      "category": "anime",
+      "tags": [
+        "mecha",
+        "classic",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/04/dc/29883_jQ4Hz.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "ウマ娘",
+      "name_en": "Uma Musume",
+      "name_cn": "赛马娘",
+      "category": "game",
+      "tags": [
+        "game",
+        "idol",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/1c/6b/315574_tLgrT.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "Fate/Grand Order",
+      "name_en": "Fate/Grand Order",
+      "name_cn": "命运-冠位指定",
+      "category": "game",
+      "tags": [
+        "game",
+        "fate",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/dd/fa/196773_Y19Yd.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "アイドルマスター",
+      "name_en": "THE iDOLM@STER",
+      "name_cn": "偶像大师",
+      "category": "game",
+      "tags": [
+        "game",
+        "idol"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/9a/da/101399_el5Cl.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "ラブライブ!",
+      "name_en": "Love Live!",
+      "name_cn": "Love Live",
+      "category": "anime",
+      "tags": [
+        "idol",
+        "figure"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/75/74/49294_ISOI2.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "ぼっち・ざ・ろっく!",
+      "name_en": "Bocchi the Rock!",
+      "name_cn": "孤独摇滚",
+      "category": "anime",
+      "tags": [
+        "music",
+        "comedy",
+        "popular"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/e2/e7/328609_2EHLJ.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "リコリス・リコイル",
+      "name_en": "Lycoris Recoil",
+      "name_cn": "莉可丽丝",
+      "category": "anime",
+      "tags": [
+        "action",
+        "lesbian"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/65/19/364450_xx2zx.jpg",
+      "weight": 1.0
+    },
+    {
+      "name": "転生したらスライムだった件",
+      "name_en": "That Time I Got Reincarnated as a Slime",
+      "name_cn": "关于我转生变成史莱姆这档事",
+      "category": "anime",
+      "tags": [
+        "isekai",
+        "fantasy"
+      ],
+      "image_url": "https://lain.bgm.tv/r/400/pic/cover/l/7b/d6/239816_BbNdb.jpg",
+      "weight": 1.0
+    }
+  ]
+}

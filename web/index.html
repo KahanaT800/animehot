@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anime Hot // 二次元市场流动性终端</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Orbitron:wght@500;700;900&family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- D3.js for force-directed bubble chart -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+    <!-- App Styles -->
+    <link rel="stylesheet" href="/static/styles.css?v=6">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="logo" onclick="goBack()">
+            <div class="logo-mark">AH</div>
+            <span class="logo-text">Anime Hot</span>
+        </div>
+
+        <div class="header-status">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">CONNECTING</span>
+            </div>
+            <div class="status-indicator">
+                <span id="lastUpdate">--:--</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- ============================================
+             PAGE: OVERVIEW (Market Dashboard)
+        ============================================ -->
+        <div id="page-overview" class="page active">
+            <!-- Tab Navigation -->
+            <nav class="tab-nav">
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="dashboard" onclick="switchTab('dashboard')">
+                        <span class="tab-icon">📊</span>
+                        <span>DASHBOARD</span>
+                    </button>
+                    <button class="tab-btn" data-tab="iplist" onclick="switchTab('iplist')">
+                        <span class="tab-icon">📋</span>
+                        <span>ALL IPs</span>
+                        <span class="tab-badge" id="ipCountBadge">0</span>
+                    </button>
+                </div>
+                <div class="time-switcher">
+                    <button class="time-btn" data-hours="1">1H</button>
+                    <button class="time-btn active" data-hours="24">24H</button>
+                    <button class="time-btn" data-hours="168">7D</button>
+                </div>
+            </nav>
+
+            <!-- Tab Content: Dashboard -->
+            <div id="tab-dashboard" class="tab-content active">
+                <!-- Section 1: Stats Overview -->
+                <section class="section-stats">
+                <div class="stat-box">
+                    <span class="stat-label">OUTFLOW <span class="stat-period" id="outflowPeriod">24H</span></span>
+                    <span class="stat-num outflow" id="totalOutflow">--</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">INFLOW <span class="stat-period" id="inflowPeriod">24H</span></span>
+                    <span class="stat-num inflow" id="totalInflow">--</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">HOT <span class="stat-period" id="hotPeriod">24H</span> MED</span>
+                    <span class="stat-num hot" id="medianHot">--</span>
+                </div>
+            </section>
+
+            <!-- Section 2: Three Leaderboards -->
+            <section class="section-leaderboards">
+                <div class="lb-card">
+                    <div class="lb-title outflow">OUTFLOW TOP 10</div>
+                    <div class="lb-list" id="leaderboard-outflow">
+                        <div class="loading">LOADING</div>
+                    </div>
+                </div>
+                <div class="lb-card">
+                    <div class="lb-title inflow">INFLOW TOP 10</div>
+                    <div class="lb-list" id="leaderboard-inflow">
+                        <div class="loading">LOADING</div>
+                    </div>
+                </div>
+                <div class="lb-card">
+                    <div class="lb-title hot">HOT TOP 10</div>
+                    <div class="lb-list" id="leaderboard-hot">
+                        <div class="loading">LOADING</div>
+                    </div>
+                </div>
+            </section>
+
+                <!-- Section 3: Force-Directed Bubble Chart -->
+                <section class="section-chart">
+                    <div class="chart-title">MARKET DISTRIBUTION</div>
+                    <div class="chart-area" id="bubbleChartContainer">
+                        <div class="chart-axis-label axis-y">OUTFLOW ↑</div>
+                        <div class="chart-axis-label axis-x">INFLOW →</div>
+                        <svg id="bubbleChart"></svg>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Tab Content: IP List -->
+            <div id="tab-iplist" class="tab-content">
+                <section class="section-iplist">
+                    <div class="iplist-header">
+                        <h2 class="iplist-title">ALL TRACKED IPs</h2>
+                        <div class="iplist-search">
+                            <input type="text" id="ipSearchInput" placeholder="Search IP name..." oninput="filterIPTable()">
+                        </div>
+                    </div>
+                    <div class="iplist-table-wrapper">
+                        <table class="iplist-table" id="ipTable">
+                            <thead>
+                                <tr>
+                                    <th class="sortable" data-sort="name" onclick="sortIPTable('name')">NAME</th>
+                                    <th class="sortable num" data-sort="inflow" onclick="sortIPTable('inflow')">INFLOW</th>
+                                    <th class="sortable num" data-sort="outflow" onclick="sortIPTable('outflow')">OUTFLOW</th>
+                                    <th class="sortable num" data-sort="hot" onclick="sortIPTable('hot')">HOT</th>
+                                </tr>
+                            </thead>
+                            <tbody id="ipTableBody">
+                                <tr><td colspan="4" class="loading">LOADING</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+        <!-- ============================================
+             PAGE: IP DETAIL
+        ============================================ -->
+        <div id="page-detail" class="page">
+            <!-- Back Button -->
+            <div class="back-bar">
+                <button class="back-btn" onclick="goBack()">
+                    <span>←</span>
+                    <span>BACK TO OVERVIEW</span>
+                </button>
+            </div>
+
+            <!-- Detail Header -->
+            <div class="detail-header">
+                <div class="detail-avatar" id="detailAvatar">
+                    <span id="detailAvatarText">?</span>
+                </div>
+                <div class="detail-info">
+                    <h1 class="detail-title" id="detailName">--</h1>
+                    <p class="detail-subtitle" id="detailSubtitle">--</p>
+                    <div class="detail-tags" id="detailTags"></div>
+                </div>
+                <div class="detail-score">
+                    <div class="score-label">HOT Score</div>
+                    <div class="score-formula">= (Out+1)/(In+1) × log(Out+1)</div>
+                    <div class="score-value" id="detailScore">--</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="charts-grid">
+                <!-- Supply-Demand Gap Chart -->
+                <div class="chart-panel">
+                    <div class="chart-header">
+                        <span class="chart-title">SUPPLY-DEMAND GAP (12H)</span>
+                        <div class="chart-legend">
+                            <div class="legend-item">
+                                <div class="legend-bar inflow"></div>
+                                <span>Inflow (左軸)</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-bar outflow"></div>
+                                <span>Outflow (右軸)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="gapChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Price Distribution -->
+                <div class="chart-panel">
+                    <div class="chart-header">
+                        <span class="chart-title">PRICE DISTRIBUTION (12H)</span>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="priceChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Items Gallery -->
+            <div class="items-section">
+                <div class="panel-header">
+                    <span class="panel-title">RECENT ITEMS</span>
+                </div>
+                <div id="itemsGrid" class="items-grid">
+                    <div class="loading">LOADING</div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- App Script -->
+    <script src="/static/app.js?v=20"></script>
+</body>
+</html>
