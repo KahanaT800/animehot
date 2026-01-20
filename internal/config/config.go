@@ -179,7 +179,7 @@ func DefaultConfig() *Config {
 			ProxyURL:          "",
 			Headless:          true,
 			MaxConcurrency:    3,
-			MaxFetchCount:     100,
+			MaxFetchCount:     120,
 			PageTimeout:       60 * time.Second, // 单页加载超时（6页串行任务总计约6分钟）
 			DebugScreenshot:   false,
 			ScreenshotTimeout: 15 * time.Second,

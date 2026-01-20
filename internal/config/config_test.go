@@ -51,7 +51,7 @@ func TestDefaultConfig(t *testing.T) {
 	// Browser defaults
 	assert.True(t, cfg.Browser.Headless)
 	assert.Equal(t, 3, cfg.Browser.MaxConcurrency)
-	assert.Equal(t, 100, cfg.Browser.MaxFetchCount)
+	assert.Equal(t, 120, cfg.Browser.MaxFetchCount)
 	assert.Equal(t, 60*time.Second, cfg.Browser.PageTimeout) // 单页超时 60s
 	assert.False(t, cfg.Browser.DebugScreenshot)
 	assert.Equal(t, 15*time.Second, cfg.Browser.ScreenshotTimeout)

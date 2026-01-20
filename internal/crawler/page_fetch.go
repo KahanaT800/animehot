@@ -307,7 +307,9 @@ func (s *Service) fetchPageContent(
 		return nil, fmt.Errorf("wait for items: %w", err)
 	}
 
-	// ========== 12. 滚动加载 ==========
+	// ========== 12. 滚动加载 + 增量提取 ==========
+	// Mercari 使用虚拟列表：只有可见区域的元素有完整内容
+	// 因此需要边滚动边提取，用 map 去重
 	limit := s.maxFetchCount
 	if limit <= 0 {
 		limit = 50
@@ -315,43 +317,57 @@ func (s *Service) fetchPageContent(
 
 	timeout := time.After(s.pageTimeout)
 	noGrowthAttempts := 0
+	itemsMap := make(map[string]*pb.Item) // key: source_id, 用于去重
 
-	// countItems 统计已渲染的商品元素数量（有 <a> 标签的才算）
-	// 这是为了处理 Mercari 虚拟化列表：DOM 中有 ~120 个占位元素，但只有可见区域内的才有完整内容
-	countItems := func() (int, error) {
-		countCtx, countCancel := context.WithTimeout(ctx, elementCountTimeout)
-		defer countCancel()
+	// extractVisibleItems 提取当前可见的商品
+	extractVisibleItems := func() int {
+		extractCtx, extractCancel := context.WithTimeout(ctx, elementCountTimeout)
+		defer extractCancel()
 
-		type countResult struct {
-			count int
-			err   error
+		type extractResult struct {
+			elements rod.Elements
+			err      error
 		}
-		countResultCh := make(chan countResult, 1)
+		extractResultCh := make(chan extractResult, 1)
 		go func() {
-			// 使用更精确的选择器：只统计包含 <a> 标签的完整元素
-			elems, elemErr := page.Elements(selector + " a")
-			if elemErr != nil {
-				countResultCh <- countResult{count: 0, err: elemErr}
-				return
-			}
-			countResultCh <- countResult{count: len(elems), err: nil}
+			elems, elemErr := page.Elements(selector)
+			extractResultCh <- extractResult{elements: elems, err: elemErr}
 		}()
 
+		var elements rod.Elements
 		select {
-		case result := <-countResultCh:
-			return result.count, result.err
-		case <-countCtx.Done():
-			return 0, fmt.Errorf("count items timeout: %w", countCtx.Err())
+		case result := <-extractResultCh:
+			if result.err != nil {
+				return 0
+			}
+			elements = result.elements
+		case <-extractCtx.Done():
+			return 0
 		}
+
+		newCount := 0
+		for _, el := range elements {
+			item, extractErr := extractItem(el)
+			if extractErr != nil {
+				continue // 占位符元素，跳过
+			}
+			if item.SourceId == "" {
+				continue
+			}
+			if _, exists := itemsMap[item.SourceId]; !exists {
+				itemsMap[item.SourceId] = item
+				newCount++
+			}
+		}
+		return newCount
 	}
+
+	// 首次提取
+	extractVisibleItems()
 
 ScrollLoop:
 	for {
-		currentCount, countErr := countItems()
-		if countErr != nil {
-			break
-		}
-		if currentCount >= limit {
+		if len(itemsMap) >= limit {
 			break
 		}
 
@@ -364,13 +380,11 @@ ScrollLoop:
 			time.Sleep(scrollWaitInterval)
 		}
 
-		afterCount, countErr := countItems()
-		if countErr != nil {
-			break
-		}
-		if afterCount <= currentCount {
+		// 滚动后提取新出现的商品
+		newCount := extractVisibleItems()
+		if newCount == 0 {
 			noGrowthAttempts++
-			if noGrowthAttempts >= 3 && currentCount > 0 {
+			if noGrowthAttempts >= 3 && len(itemsMap) > 0 {
 				break
 			}
 		} else {
@@ -378,57 +392,11 @@ ScrollLoop:
 		}
 	}
 
-	// ========== 13. 提取商品 ==========
-	elementsCtx, elementsCancel := context.WithTimeout(ctx, s.pageTimeout)
-	defer elementsCancel()
-
-	type elementsResult struct {
-		elements rod.Elements
-		err      error
-	}
-	elementsResultCh := make(chan elementsResult, 1)
-	go func() {
-		elems, elemErr := page.Elements(selector)
-		elementsResultCh <- elementsResult{elements: elems, err: elemErr}
-	}()
-
-	var elements rod.Elements
-	select {
-	case result := <-elementsResultCh:
-		elements = result.elements
-		err = result.err
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "timeout") {
-				s.logPageTimeout("get_elements", taskID, url, page, err)
-			}
-			return nil, fmt.Errorf("get elements: %w", err)
-		}
-	case <-elementsCtx.Done():
-		err = fmt.Errorf("get elements timeout: %w", elementsCtx.Err())
-		s.logPageTimeout("get_elements", taskID, url, page, elementsCtx.Err())
-		return nil, err
-	}
-
-	if len(elements) == 0 {
-		return []*pb.Item{}, nil
-	}
-
-	items := make([]*pb.Item, 0, limit)
-	skipCount := 0
-	for i, el := range elements {
+	// ========== 13. 转换为切片 ==========
+	items := make([]*pb.Item, 0, len(itemsMap))
+	for _, item := range itemsMap {
 		if len(items) >= limit {
 			break
-		}
-		item, extractErr := extractItem(el)
-		if extractErr != nil {
-			skipCount++
-			if skipCount <= 3 {
-				s.logger.Warn("extract item failed",
-					slog.String("task_id", taskID),
-					slog.Int("index", i),
-					slog.String("error", extractErr.Error()))
-			}
-			continue
 		}
 		items = append(items, item)
 	}
@@ -436,7 +404,7 @@ ScrollLoop:
 	s.logger.Info("found items",
 		slog.String("task_id", taskID),
 		slog.Int("count", len(items)),
-		slog.Int("skipped", skipCount))
+		slog.Int("total_seen", len(itemsMap)))
 
 	// ========== 14. 保存 Cookie（可选）==========
 	if !opts.SkipCookies && s.cookieManager != nil && len(items) > 0 {

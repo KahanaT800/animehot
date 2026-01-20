@@ -72,3 +72,6 @@ PROJECT_PORTFOLIO.md
 
 # Local preview symlink
 web/static
+
+# Mercari HTML files
+mercari.html
