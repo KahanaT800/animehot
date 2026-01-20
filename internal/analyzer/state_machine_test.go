@@ -21,7 +21,7 @@ func setupStateMachine(t *testing.T) (*StateMachine, func()) {
 		Addr: s.Addr(),
 	})
 
-	sm := NewStateMachine(rdb, time.Hour)
+	sm := NewStateMachine(rdb, 24*time.Hour, 48*time.Hour)
 
 	return sm, func() {
 		rdb.Close()

@@ -57,6 +57,8 @@ type SchedulerConfig struct {
 // AnalyzerConfig 分析器配置
 type AnalyzerConfig struct {
 	SnapshotTTL            time.Duration `json:"snapshot_ttl"`             // Redis 快照 TTL (默认 48h)
+	ItemTTLAvailable       time.Duration `json:"item_ttl_available"`       // on_sale 商品状态机 TTL (默认 24h)
+	ItemTTLSold            time.Duration `json:"item_ttl_sold"`            // sold 商品状态机 TTL (默认 48h)
 	StatsRetention         time.Duration `json:"stats_retention"`          // 统计数据保留时间 (默认 30d)
 	HighOutflowThreshold   int           `json:"high_outflow_threshold"`   // 高出货量预警阈值 (默认 50)
 	LowLiquidityThreshold  float64       `json:"low_liquidity_threshold"`  // 低流动性预警阈值 (默认 0.3)
@@ -152,11 +154,13 @@ func DefaultConfig() *Config {
 		},
 		Analyzer: AnalyzerConfig{
 			SnapshotTTL:            48 * time.Hour,
-			StatsRetention:         30 * 24 * time.Hour, // 30 days
-			HighOutflowThreshold:   50,                  // 出货量 >= 50 触发预警
-			LowLiquidityThreshold:  0.3,                 // 流动性 < 0.3 触发预警 (供过于求)
-			HighLiquidityThreshold: 2.0,                 // 流动性 > 2.0 触发预警 (爆火)
-			TrendWindowSize:        24,                  // 24 小时窗口
+			ItemTTLAvailable:       24 * time.Hour,       // on_sale 商品 TTL
+			ItemTTLSold:            48 * time.Hour,       // sold 商品 TTL (需覆盖冷门 IP ~33h)
+			StatsRetention:         30 * 24 * time.Hour,  // 30 days
+			HighOutflowThreshold:   50,                   // 出货量 >= 50 触发预警
+			LowLiquidityThreshold:  0.3,                  // 流动性 < 0.3 触发预警 (供过于求)
+			HighLiquidityThreshold: 2.0,                  // 流动性 > 2.0 触发预警 (爆火)
+			TrendWindowSize:        24,                   // 24 小时窗口
 		},
 		MySQL: MySQLConfig{
 			DSN: "root:password@tcp(localhost:3306)/animetop?parseTime=true&loc=Local",
@@ -256,6 +260,12 @@ func applyDefaults(cfg *Config) {
 	// Analyzer
 	if cfg.Analyzer.SnapshotTTL == 0 {
 		cfg.Analyzer.SnapshotTTL = defaults.Analyzer.SnapshotTTL
+	}
+	if cfg.Analyzer.ItemTTLAvailable == 0 {
+		cfg.Analyzer.ItemTTLAvailable = defaults.Analyzer.ItemTTLAvailable
+	}
+	if cfg.Analyzer.ItemTTLSold == 0 {
+		cfg.Analyzer.ItemTTLSold = defaults.Analyzer.ItemTTLSold
 	}
 	if cfg.Analyzer.StatsRetention == 0 {
 		cfg.Analyzer.StatsRetention = defaults.Analyzer.StatsRetention
@@ -392,6 +402,16 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("ANALYZER_SNAPSHOT_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.Analyzer.SnapshotTTL = d
+		}
+	}
+	if v := os.Getenv("ANALYZER_ITEM_TTL_AVAILABLE"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Analyzer.ItemTTLAvailable = d
+		}
+	}
+	if v := os.Getenv("ANALYZER_ITEM_TTL_SOLD"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Analyzer.ItemTTLSold = d
 		}
 	}
 	if v := os.Getenv("ANALYZER_HIGH_OUTFLOW_THRESHOLD"); v != "" {

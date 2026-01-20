@@ -203,20 +203,29 @@ func (a *Aggregator) upsertHourlyStats(ctx context.Context, stats *HourlyStats) 
 		SampleCount:    uint32(stats.SampleCount),
 	}
 
-	// UPSERT: 如果存在则累加 inflow/outflow，更新其他字段
+	// UPSERT: 如果存在则累加 inflow/outflow，条件更新 min/max
+	// 注意：min_price_item 和 max_price_item 需要条件更新，只有当新价格真的更小/更大时才更新
 	return a.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "ip_id"}, {Name: "hour_bucket"}},
 		DoUpdates: clause.Assignments(map[string]any{
 			// 累加 inflow 和 outflow
-			"inflow":          gorm.Expr("inflow + ?", stats.Inflow),
-			"outflow":         gorm.Expr("outflow + ?", stats.Outflow),
-			"active_count":    stats.ActiveCount,
-			"avg_price":       stats.AvgPrice,
-			"median_price":    stats.MedianPrice,
-			"min_price":       stats.MinPrice,
-			"max_price":       stats.MaxPrice,
-			"min_price_item":  minPriceItem,
-			"max_price_item":  maxPriceItem,
+			"inflow":       gorm.Expr("inflow + ?", stats.Inflow),
+			"outflow":      gorm.Expr("outflow + ?", stats.Outflow),
+			"active_count": stats.ActiveCount,
+			"avg_price":    stats.AvgPrice,
+			"median_price": stats.MedianPrice,
+			// 条件更新 min_price：只有当新价格更小时才更新
+			"min_price": gorm.Expr("CASE WHEN ? IS NOT NULL AND (min_price IS NULL OR ? < min_price) THEN ? ELSE min_price END",
+				stats.MinPrice, stats.MinPrice, stats.MinPrice),
+			// 条件更新 max_price：只有当新价格更大时才更新
+			"max_price": gorm.Expr("CASE WHEN ? IS NOT NULL AND (max_price IS NULL OR ? > max_price) THEN ? ELSE max_price END",
+				stats.MaxPrice, stats.MaxPrice, stats.MaxPrice),
+			// 条件更新 min_price_item：只有当新价格更小时才更新
+			"min_price_item": gorm.Expr("CASE WHEN ? IS NOT NULL AND (min_price IS NULL OR ? < min_price) THEN ? ELSE min_price_item END",
+				stats.MinPrice, stats.MinPrice, minPriceItem),
+			// 条件更新 max_price_item：只有当新价格更大时才更新
+			"max_price_item": gorm.Expr("CASE WHEN ? IS NOT NULL AND (max_price IS NULL OR ? > max_price) THEN ? ELSE max_price_item END",
+				stats.MaxPrice, stats.MaxPrice, maxPriceItem),
 			"price_stddev":    stats.PriceStddev,
 			"sample_count":    gorm.Expr("sample_count + ?", stats.SampleCount),
 			"liquidity_index": gorm.Expr("CASE WHEN (inflow + ?) > 0 THEN (outflow + ?) / (inflow + ?) ELSE NULL END", stats.Inflow, stats.Outflow, stats.Inflow),

@@ -106,7 +106,14 @@ func NewPipeline(
 
 	diffEngine := NewDiffEngine(rdb, snapshotTTL)
 	aggregator := NewAggregator(db, diffEngine)
-	stateMachine := NewStateMachine(rdb, ItemTTL)
+	// 状态机 TTL 从配置读取，支持分级 (on_sale: 24h, sold: 48h)
+	ttlAvailable := time.Duration(0)
+	ttlSold := time.Duration(0)
+	if analyzerCfg != nil {
+		ttlAvailable = analyzerCfg.ItemTTLAvailable
+		ttlSold = analyzerCfg.ItemTTLSold
+	}
+	stateMachine := NewStateMachine(rdb, ttlAvailable, ttlSold)
 	intervalAdjuster := NewIntervalAdjuster(db, pipelineCfg.IntervalAdjuster)
 	cacheManager := NewLeaderboardCacheManager(rdb)
 
@@ -280,24 +287,26 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 		return fmt.Errorf("state machine: %w", err)
 	}
 
-	// 主动清理消失的商品 (从前3页掉出去的商品不太可能再回来)
-	if deleted, err := p.stateMachine.CleanupMissingItems(ctx, ipID, resp.Items); err != nil {
-		slog.Warn("cleanup missing items failed",
-			slog.Uint64("ip_id", ipID),
-			slog.String("error", err.Error()))
-	} else if deleted > 0 {
-		slog.Debug("cleaned up missing items",
-			slog.Uint64("ip_id", ipID),
-			slog.Int64("deleted", deleted))
-	}
+	// 不再主动清理消失的商品，完全依赖分级 TTL 自动过期
+	// 原因：主动清理机制复杂且容易出错（爬虫故障时误删、sold商品被重复计入等）
+	// TTL 策略：on_sale 12小时，sold 48小时（覆盖冷门 IP ~33 小时可见范围）
+	// 内存估算：热门IP 600/h×12h + 100/h×48h ≈ 12,000 商品/IP，50个IP ≈ 60MB
+	_ = existingCount // 保留变量用于 isFirstCrawl 判断
 
 	// 统计转换
 	summary := SummarizeTransitions(transitions)
 
 	// 创建 LiquidityResult
+	// 首次爬取时跳过所有统计（避免将历史数据误计为当前流量）
 	inflow := summary.NewListings
+	outflow := summary.Sold
 	if isFirstCrawl {
 		inflow = 0
+		outflow = 0 // 首次爬取也要跳过 outflow，避免历史 sold 被误计
+		slog.Info("first crawl for IP, skipping inflow/outflow counting",
+			slog.Uint64("ip_id", ipID),
+			slog.Int("raw_new_listings", summary.NewListings),
+			slog.Int("raw_sold", summary.Sold))
 	}
 
 	liquidityResult := &LiquidityResult{
@@ -305,18 +314,22 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 		OnSaleInflow:   inflow,
 		OnSaleOutflow:  0,
 		OnSaleTotal:    0,
-		SoldInflow:     summary.Sold,
+		SoldInflow:     outflow,
 		SoldTotal:      0,
 		LiquidityIndex: 0,
 		Timestamp:      time.Now(),
 	}
 
 	if inflow > 0 {
-		liquidityResult.LiquidityIndex = float64(summary.Sold) / float64(inflow)
+		liquidityResult.LiquidityIndex = float64(outflow) / float64(inflow)
 	}
 
 	// 收集新售出商品的价格信息
-	soldItems := collectSoldItemsInfo(transitions, resp.Items)
+	// 首次爬取时不收集（避免历史 sold 被记录为当前小时的价格数据）
+	var soldItems []*PriceItemInfo
+	if !isFirstCrawl {
+		soldItems = collectSoldItemsInfo(transitions, resp.Items)
+	}
 
 	// ========== Phase 2: 数据持久化 (并行) ==========
 	// - UpsertItemSnapshots (MySQL)

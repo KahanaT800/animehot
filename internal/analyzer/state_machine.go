@@ -17,8 +17,12 @@ const (
 	// ItemKeyPrefix is the Redis key prefix for item state tracking
 	ItemKeyPrefix = "animetop:item"
 
-	// ItemTTL is the default TTL for item state (7 days)
-	ItemTTL = 7 * 24 * time.Hour
+	// DefaultItemTTLAvailable 是 on_sale 商品的默认 TTL (24 小时)
+	DefaultItemTTLAvailable = 24 * time.Hour
+
+	// DefaultItemTTLSold 是 sold 商品的默认 TTL (48 小时)
+	// 需要覆盖冷门 IP 的可见范围停留时间 (~33 小时)
+	DefaultItemTTLSold = 48 * time.Hour
 )
 
 // TrackedItemState represents the stored state of an item in Redis (v2 state machine)
@@ -51,19 +55,32 @@ type StateTransition struct {
 
 // StateMachine tracks item state changes using Redis HASH
 type StateMachine struct {
-	rdb *redis.Client
-	ttl time.Duration
+	rdb          *redis.Client
+	ttlAvailable time.Duration // TTL for on_sale items
+	ttlSold      time.Duration // TTL for sold items
 }
 
 // NewStateMachine creates a new StateMachine instance
-func NewStateMachine(rdb *redis.Client, ttl time.Duration) *StateMachine {
-	if ttl == 0 {
-		ttl = ItemTTL
+func NewStateMachine(rdb *redis.Client, ttlAvailable, ttlSold time.Duration) *StateMachine {
+	if ttlAvailable == 0 {
+		ttlAvailable = DefaultItemTTLAvailable
+	}
+	if ttlSold == 0 {
+		ttlSold = DefaultItemTTLSold
 	}
 	return &StateMachine{
-		rdb: rdb,
-		ttl: ttl,
+		rdb:          rdb,
+		ttlAvailable: ttlAvailable,
+		ttlSold:      ttlSold,
 	}
+}
+
+// getTTLForStatus 根据商品状态返回对应的 TTL
+func (sm *StateMachine) getTTLForStatus(status string) time.Duration {
+	if status == "sold" {
+		return sm.ttlSold
+	}
+	return sm.ttlAvailable
 }
 
 // itemKey returns the Redis key for an item's state
@@ -162,7 +179,7 @@ func (sm *StateMachine) UpdateItemState(ctx context.Context, ipID uint64, item *
 			"first_seen", now,
 			"last_seen", now,
 		)
-		pipe.Expire(ctx, key, sm.ttl)
+		pipe.Expire(ctx, key, sm.getTTLForStatus(newStatus))
 		_, err = pipe.Exec(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("create item state: %w", err)
@@ -205,7 +222,7 @@ func (sm *StateMachine) UpdateItemState(ctx context.Context, ipID uint64, item *
 			"price", item.Price,
 			"last_seen", now,
 		)
-		pipe.Expire(ctx, key, sm.ttl)
+		pipe.Expire(ctx, key, sm.getTTLForStatus(newStatus))
 		_, err = pipe.Exec(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("update item state: %w", err)
@@ -345,7 +362,7 @@ func (sm *StateMachine) ProcessItemsBatch(ctx context.Context, ipID uint64, item
 					"last_seen", u.lastSeen,
 				)
 			}
-			pipe.Expire(ctx, u.key, sm.ttl)
+			pipe.Expire(ctx, u.key, sm.getTTLForStatus(u.status))
 		}
 		_, err := pipe.Exec(ctx)
 		if err != nil {
@@ -529,72 +546,3 @@ func (sm *StateMachine) GetItemCount(ctx context.Context, ipID uint64) (int64, e
 	return count, nil
 }
 
-// CleanupMissingItems 清理本次爬取中未出现的商品
-// 逻辑：如果商品从前3页消失，在供大于求的市场中不太可能再回来
-// 主动清理可以保持 Redis 数据的精简
-func (sm *StateMachine) CleanupMissingItems(ctx context.Context, ipID uint64, seenItems []*pb.Item) (int64, error) {
-	// 构建本次爬取到的 source_id 集合
-	seenSet := make(map[string]bool, len(seenItems))
-	for _, item := range seenItems {
-		if item != nil && item.SourceId != "" {
-			seenSet[item.SourceId] = true
-		}
-	}
-
-	// 扫描该 IP 下所有 Redis keys
-	pattern := fmt.Sprintf("%s:%d:*", ItemKeyPrefix, ipID)
-	keyPrefix := fmt.Sprintf("%s:%d:", ItemKeyPrefix, ipID)
-	var cursor uint64
-	var keysToDelete []string
-
-	for {
-		var err error
-		var batch []string
-		batch, cursor, err = sm.rdb.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return 0, fmt.Errorf("scan keys: %w", err)
-		}
-
-		// 检查每个 key 对应的商品是否在本次爬取中出现
-		for _, key := range batch {
-			// 从 key 中提取 source_id: animetop:item:{ip_id}:{source_id}
-			sourceID := key[len(keyPrefix):]
-			if !seenSet[sourceID] {
-				keysToDelete = append(keysToDelete, key)
-			}
-		}
-
-		if cursor == 0 {
-			break
-		}
-	}
-
-	// 批量删除消失的商品
-	if len(keysToDelete) == 0 {
-		return 0, nil
-	}
-
-	// 分批删除，避免单次删除太多
-	var deleted int64
-	for i := 0; i < len(keysToDelete); i += pipelineBatchSize {
-		end := i + pipelineBatchSize
-		if end > len(keysToDelete) {
-			end = len(keysToDelete)
-		}
-		batch := keysToDelete[i:end]
-
-		result, err := sm.rdb.Del(ctx, batch...).Result()
-		if err != nil {
-			return deleted, fmt.Errorf("delete keys: %w", err)
-		}
-		deleted += result
-	}
-
-	slog.Info("cleaned up missing items from Redis",
-		slog.Uint64("ip_id", ipID),
-		slog.Int("seen_count", len(seenSet)),
-		slog.Int64("deleted_count", deleted),
-	)
-
-	return deleted, nil
-}
