@@ -60,9 +60,25 @@ body {
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.6;
+    position: relative;
 }
 
-/* Animated gradient background */
+/* Blurred anime background image */
+.bg-image {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: url('back.png') center center / cover no-repeat;
+    filter: blur(8px);
+    opacity: 0.5;
+    z-index: 0;
+    pointer-events: none;
+    transform: scale(1.1); /* Prevent blur edge artifacts */
+}
+
+/* Dark overlay for better readability */
 body::before {
     content: '';
     position: fixed;

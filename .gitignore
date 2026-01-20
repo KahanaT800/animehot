@@ -69,3 +69,6 @@ old/
 # Project planning docs (not needed in repo)
 project/
 PROJECT_PORTFOLIO.md
+
+# Local preview symlink
+web/static
