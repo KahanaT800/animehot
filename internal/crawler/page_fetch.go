@@ -315,8 +315,10 @@ func (s *Service) fetchPageContent(
 		limit = 50
 	}
 
+	scrollStart := time.Now()
 	timeout := time.After(s.pageTimeout)
 	noGrowthAttempts := 0
+	scrollCount := 0
 	itemsMap := make(map[string]*pb.Item) // key: source_id, 用于去重
 
 	// extractVisibleItems 提取当前可见的商品
@@ -372,6 +374,7 @@ ScrollLoop:
 		}
 
 		_, _ = page.Eval(`window.scrollBy(0, window.innerHeight)`)
+		scrollCount++
 
 		select {
 		case <-timeout:
@@ -404,7 +407,9 @@ ScrollLoop:
 	s.logger.Info("found items",
 		slog.String("task_id", taskID),
 		slog.Int("count", len(items)),
-		slog.Int("total_seen", len(itemsMap)))
+		slog.Int("total_seen", len(itemsMap)),
+		slog.Int("scroll_count", scrollCount),
+		slog.Duration("scroll_duration", time.Since(scrollStart)))
 
 	// ========== 14. 保存 Cookie（可选）==========
 	if !opts.SkipCookies && s.cookieManager != nil && len(items) > 0 {

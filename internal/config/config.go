@@ -143,24 +143,24 @@ func DefaultConfig() *Config {
 			ProxyAutoSwitch:       false,
 		},
 		Scheduler: SchedulerConfig{
-			BaseInterval:    1 * time.Hour,
-			MinInterval:     15 * time.Minute,
-			MaxInterval:     1 * time.Hour,
+			BaseInterval:    2 * time.Hour,
+			MinInterval:     1 * time.Hour,
+			MaxInterval:     2 * time.Hour,
 			BatchSize:       50,
 			JanitorInterval: 10 * time.Minute,
 			JanitorTimeout:  30 * time.Minute,
-			PagesOnSale:     3,
-			PagesSold:       3,
+			PagesOnSale:     5,
+			PagesSold:       5,
 		},
 		Analyzer: AnalyzerConfig{
 			SnapshotTTL:            48 * time.Hour,
-			ItemTTLAvailable:       24 * time.Hour,       // on_sale 商品 TTL
-			ItemTTLSold:            48 * time.Hour,       // sold 商品 TTL (需覆盖冷门 IP ~33h)
-			StatsRetention:         30 * 24 * time.Hour,  // 30 days
-			HighOutflowThreshold:   50,                   // 出货量 >= 50 触发预警
-			LowLiquidityThreshold:  0.3,                  // 流动性 < 0.3 触发预警 (供过于求)
-			HighLiquidityThreshold: 2.0,                  // 流动性 > 2.0 触发预警 (爆火)
-			TrendWindowSize:        24,                   // 24 小时窗口
+			ItemTTLAvailable:       24 * time.Hour,      // on_sale 商品 TTL
+			ItemTTLSold:            48 * time.Hour,      // sold 商品 TTL (需覆盖冷门 IP ~33h)
+			StatsRetention:         30 * 24 * time.Hour, // 30 days
+			HighOutflowThreshold:   50,                  // 出货量 >= 50 触发预警
+			LowLiquidityThreshold:  0.3,                 // 流动性 < 0.3 触发预警 (供过于求)
+			HighLiquidityThreshold: 2.0,                 // 流动性 > 2.0 触发预警 (爆火)
+			TrendWindowSize:        24,                  // 24 小时窗口
 		},
 		MySQL: MySQLConfig{
 			DSN: "root:password@tcp(localhost:3306)/animetop?parseTime=true&loc=Local",

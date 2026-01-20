@@ -31,14 +31,14 @@ func TestDefaultConfig(t *testing.T) {
 	assert.False(t, cfg.App.ProxyAutoSwitch)
 
 	// Scheduler defaults
-	assert.Equal(t, 1*time.Hour, cfg.Scheduler.BaseInterval)
-	assert.Equal(t, 15*time.Minute, cfg.Scheduler.MinInterval)
-	assert.Equal(t, 1*time.Hour, cfg.Scheduler.MaxInterval)
+	assert.Equal(t, 2*time.Hour, cfg.Scheduler.BaseInterval)
+	assert.Equal(t, 1*time.Hour, cfg.Scheduler.MinInterval)
+	assert.Equal(t, 2*time.Hour, cfg.Scheduler.MaxInterval)
 	assert.Equal(t, 50, cfg.Scheduler.BatchSize)
 	assert.Equal(t, 10*time.Minute, cfg.Scheduler.JanitorInterval)
 	assert.Equal(t, 30*time.Minute, cfg.Scheduler.JanitorTimeout)
-	assert.Equal(t, 3, cfg.Scheduler.PagesOnSale)
-	assert.Equal(t, 3, cfg.Scheduler.PagesSold)
+	assert.Equal(t, 5, cfg.Scheduler.PagesOnSale)
+	assert.Equal(t, 5, cfg.Scheduler.PagesSold)
 
 	// Analyzer defaults
 	assert.Equal(t, 48*time.Hour, cfg.Analyzer.SnapshotTTL)
@@ -106,7 +106,7 @@ func TestLoad_ValidConfigFile(t *testing.T) {
 
 	// Default values for unspecified fields
 	assert.Equal(t, "info", cfg.App.LogLevel)
-	assert.Equal(t, 15*time.Minute, cfg.Scheduler.MinInterval)
+	assert.Equal(t, 1*time.Hour, cfg.Scheduler.MinInterval)
 }
 
 func TestLoad_InvalidJSON(t *testing.T) {

@@ -62,7 +62,7 @@ function initFromURL() {
 
     // 初始化时间范围
     const hours = parseInt(params.get('hours'), 10);
-    if ([1, 24, 168].includes(hours)) {
+    if ([2, 24, 168].includes(hours)) {
         currentTimeRange = hours;
     }
 
@@ -103,7 +103,7 @@ function setTimeRange(hours) {
 
 // 更新时间范围标签
 function updatePeriodLabels() {
-    const periodLabel = currentTimeRange === 1 ? '1H' : currentTimeRange === 24 ? '24H' : '7D';
+    const periodLabel = currentTimeRange === 2 ? '2H' : currentTimeRange === 24 ? '24H' : '7D';
     const outflowEl = document.getElementById('outflowPeriod');
     const inflowEl = document.getElementById('inflowPeriod');
     const hotEl = document.getElementById('hotPeriod');
@@ -118,7 +118,7 @@ function handlePopState() {
 
     // 处理时间范围变化
     const hours = parseInt(params.get('hours'), 10);
-    const newRange = [1, 24, 168].includes(hours) ? hours : 24;
+    const newRange = [2, 24, 168].includes(hours) ? hours : 24;
 
     if (newRange !== currentTimeRange) {
         currentTimeRange = newRange;

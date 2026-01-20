@@ -261,6 +261,11 @@ body::after {
 .stat-num.liquidity { color: var(--liquidity); }
 .stat-num.hot { color: var(--liquidity); }
 
+/* Stat labels match their data colors */
+.stat-box.outflow .stat-label { color: var(--outflow); }
+.stat-box.inflow .stat-label { color: var(--inflow); }
+.stat-box.hot .stat-label { color: var(--liquidity); }
+
 /* ============================================
    OVERVIEW PAGE - LEADERBOARDS
 ============================================ */

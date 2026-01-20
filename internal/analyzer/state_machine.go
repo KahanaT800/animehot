@@ -545,4 +545,3 @@ func (sm *StateMachine) GetItemCount(ctx context.Context, ipID uint64) (int64, e
 
 	return count, nil
 }
-
