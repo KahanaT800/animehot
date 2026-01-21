@@ -75,6 +75,14 @@ func main() {
 	}
 	slogger.Info("Redis queue initialized")
 
+	// 初始化 ScheduleStore (Redis ZSET)
+	scheduleStore := scheduler.NewRedisScheduleStore(rdb, slogger)
+	slogger.Info("ScheduleStore initialized")
+
+	// 初始化 Scheduler
+	ipScheduler := scheduler.NewIPScheduler(db, rdb, queue, scheduleStore, &cfg.Scheduler, slogger)
+	slogger.Info("Scheduler initialized")
+
 	// 初始化 Pipeline
 	workers := cfg.App.WorkerPoolSize
 	if workers <= 0 {
@@ -99,12 +107,8 @@ func main() {
 			PagesSold:    cfg.Scheduler.PagesSold,
 		},
 	}
-	pipeline := analyzer.NewPipeline(db, rdb, queue, &cfg.Analyzer, pipelineCfg)
+	pipeline := analyzer.NewPipeline(db, rdb, queue, &cfg.Analyzer, pipelineCfg, ipScheduler)
 	slogger.Info("Pipeline initialized")
-
-	// 初始化 Scheduler
-	ipScheduler := scheduler.NewIPScheduler(db, rdb, queue, &cfg.Scheduler, slogger)
-	slogger.Info("Scheduler initialized")
 
 	// 初始化 API Server
 	apiCfg := &api.Config{

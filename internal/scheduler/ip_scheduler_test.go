@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func setupTestScheduler(t *testing.T) (*IPScheduler, *gorm.DB, func()) {
+func setupTestScheduler(t *testing.T) (*IPScheduler, *gorm.DB, *RedisScheduleStore, func()) {
 	// 设置 miniredis
 	s, err := miniredis.Run()
 	if err != nil {
@@ -65,16 +65,17 @@ func setupTestScheduler(t *testing.T) (*IPScheduler, *gorm.DB, func()) {
 	}
 
 	testLogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	scheduler := NewIPScheduler(db, rdb, queue, cfg, testLogger)
+	scheduleStore := NewRedisScheduleStore(rdb, testLogger)
+	scheduler := NewIPScheduler(db, rdb, queue, scheduleStore, cfg, testLogger)
 
-	return scheduler, db, func() {
+	return scheduler, db, scheduleStore, func() {
 		rdb.Close()
 		s.Close()
 	}
 }
 
 func TestNewIPScheduler(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	if scheduler == nil {
@@ -89,10 +90,13 @@ func TestNewIPScheduler(t *testing.T) {
 	if scheduler.config == nil {
 		t.Error("config should not be nil")
 	}
+	if scheduler.scheduleStore == nil {
+		t.Error("scheduleStore should not be nil")
+	}
 }
 
 func TestAddRemoveIP(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ip := &model.IPMetadata{
@@ -122,7 +126,7 @@ func TestAddRemoveIP(t *testing.T) {
 }
 
 func TestAddInactiveIP(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 非活跃 IP 不应被添加
@@ -141,7 +145,7 @@ func TestAddInactiveIP(t *testing.T) {
 }
 
 func TestUpdateIPWeight(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ip := &model.IPMetadata{
@@ -172,7 +176,7 @@ func TestUpdateIPWeight(t *testing.T) {
 }
 
 func TestTriggerNow(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ip := &model.IPMetadata{
@@ -184,9 +188,8 @@ func TestTriggerNow(t *testing.T) {
 	scheduler.AddIP(ip)
 
 	// 设置一个未来的调度时间
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(time.Hour)
-	scheduler.mu.Unlock()
+	ctx := context.Background()
+	_ = store.Schedule(ctx, 1, time.Now().Add(time.Hour))
 
 	// 触发立即调度
 	scheduler.TriggerNow(1)
@@ -198,23 +201,18 @@ func TestTriggerNow(t *testing.T) {
 }
 
 func TestGetScheduleStatus(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
+
+	ctx := context.Background()
 
 	// 添加几个 IP
 	for i := uint64(1); i <= 3; i++ {
-		ip := &model.IPMetadata{
-			ID:     i,
-			Name:   "Test IP",
-			Status: model.IPStatusActive,
-		}
-		scheduler.AddIP(ip)
+		_ = store.Schedule(ctx, i, time.Now().Add(time.Hour))
 	}
 
 	// 设置一个过期的调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(-time.Minute)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, time.Now().Add(-time.Minute))
 
 	status := scheduler.GetScheduleStatus()
 
@@ -231,17 +229,17 @@ func TestGetScheduleStatus(t *testing.T) {
 }
 
 func TestGetStats(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
-	// 手动设置调度时间 (不使用 AddIP 因为它会设置为 now)
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(-time.Minute) // 过期
-	scheduler.nextSchedule[2] = time.Now().Add(-time.Minute) // 过期
-	scheduler.nextSchedule[3] = time.Now().Add(time.Hour)    // 未来
-	scheduler.nextSchedule[4] = time.Now().Add(time.Hour)    // 未来
-	scheduler.nextSchedule[5] = time.Now().Add(time.Hour)    // 未来
-	scheduler.mu.Unlock()
+	ctx := context.Background()
+
+	// 手动设置调度时间
+	_ = store.Schedule(ctx, 1, time.Now().Add(-time.Minute)) // 过期
+	_ = store.Schedule(ctx, 2, time.Now().Add(-time.Minute)) // 过期
+	_ = store.Schedule(ctx, 3, time.Now().Add(time.Hour))    // 未来
+	_ = store.Schedule(ctx, 4, time.Now().Add(time.Hour))    // 未来
+	_ = store.Schedule(ctx, 5, time.Now().Add(time.Hour))    // 未来
 
 	stats := scheduler.GetStats()
 
@@ -254,21 +252,15 @@ func TestGetStats(t *testing.T) {
 }
 
 func TestStartStop(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
-
-	// 不使用数据库初始化，直接测试 Start/Stop 逻辑
-	// 手动设置一个调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(time.Hour)
-	scheduler.mu.Unlock()
 
 	ctx := context.Background()
 
-	// 启动调度器 (会尝试从数据库加载，但我们已经手动设置了)
-	// 由于 SQLite 与 Tags JSON 类型不兼容，跳过数据库初始化测试
-	// 直接测试运行状态管理
+	// 手动设置一个调度
+	_ = store.Schedule(ctx, 1, time.Now().Add(time.Hour))
 
+	// 手动设置 running 状态来测试逻辑
 	scheduler.mu.Lock()
 	scheduler.running = true
 	scheduler.mu.Unlock()
@@ -297,13 +289,6 @@ func TestRefreshActiveIPs(t *testing.T) {
 	// 注: 此测试需要 MySQL 数据库，SQLite 不支持 Tags JSON 类型
 	// 在集成测试中进行完整测试
 	t.Skip("Skipping: requires MySQL for Tags JSON type")
-
-	// 以下代码在集成测试环境中使用:
-	// scheduler, db, cleanup := setupTestScheduler(t)
-	// defer cleanup()
-	// ctx := context.Background()
-	// db.Exec(`INSERT INTO ip_metadata ...`)
-	// scheduler.RefreshActiveIPs(ctx)
 }
 
 func TestScheduleInfo(t *testing.T) {
@@ -358,7 +343,7 @@ func TestCalculateIntervalIntegration(t *testing.T) {
 // ============================================================================
 
 func TestUpdateIPWeight_NonExistent(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 更新不存在的 IP 不应 panic
@@ -375,7 +360,7 @@ func TestUpdateIPWeight_NonExistent(t *testing.T) {
 // ============================================================================
 
 func TestGetStats_Empty(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	stats := scheduler.GetStats()
@@ -392,14 +377,14 @@ func TestGetStats_Empty(t *testing.T) {
 }
 
 func TestGetStats_AllOverdue(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
+	ctx := context.Background()
+
 	// 全部过期
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(-time.Hour)
-	scheduler.nextSchedule[2] = time.Now().Add(-time.Minute)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, time.Now().Add(-time.Hour))
+	_ = store.Schedule(ctx, 2, time.Now().Add(-time.Minute))
 
 	stats := scheduler.GetStats()
 
@@ -416,14 +401,14 @@ func TestGetStats_AllOverdue(t *testing.T) {
 }
 
 func TestGetStats_NextScheduleIn(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
+	ctx := context.Background()
+
 	// 设置不同的未来时间
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = time.Now().Add(30 * time.Minute) // 较近
-	scheduler.nextSchedule[2] = time.Now().Add(2 * time.Hour)    // 较远
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, time.Now().Add(30*time.Minute)) // 较近
+	_ = store.Schedule(ctx, 2, time.Now().Add(2*time.Hour))    // 较远
 
 	stats := scheduler.GetStats()
 
@@ -438,7 +423,7 @@ func TestGetStats_NextScheduleIn(t *testing.T) {
 // ============================================================================
 
 func TestIsRunning(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	if scheduler.IsRunning() {
@@ -459,7 +444,7 @@ func TestIsRunning(t *testing.T) {
 // ============================================================================
 
 func TestAddIP_Nil(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// nil IP 不应 panic
@@ -472,7 +457,7 @@ func TestAddIP_Nil(t *testing.T) {
 }
 
 func TestAddIP_Deleted(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ip := &model.IPMetadata{
@@ -494,7 +479,7 @@ func TestAddIP_Deleted(t *testing.T) {
 // ============================================================================
 
 func TestGetNextScheduleTime_NotFound(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	_, ok := scheduler.GetNextScheduleTime(999)
@@ -508,7 +493,7 @@ func TestGetNextScheduleTime_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestStop_NotRunning(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 停止未运行的调度器不应 panic
@@ -520,7 +505,7 @@ func TestStop_NotRunning(t *testing.T) {
 }
 
 func TestStop_Idempotent(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 多次 Stop 不应 panic
@@ -534,7 +519,7 @@ func TestStop_Idempotent(t *testing.T) {
 // ============================================================================
 
 func TestConcurrentAccess(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 添加初始数据
@@ -628,7 +613,7 @@ func TestStatsStruct(t *testing.T) {
 // ============================================================================
 
 func TestInitScheduleTimes_Empty(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -639,13 +624,14 @@ func TestInitScheduleTimes_Empty(t *testing.T) {
 		t.Errorf("initScheduleTimes with empty DB should not error: %v", err)
 	}
 
-	if len(scheduler.nextSchedule) != 0 {
-		t.Errorf("expected empty schedule, got %d", len(scheduler.nextSchedule))
+	count, _ := scheduler.scheduleStore.Count(ctx)
+	if count != 0 {
+		t.Errorf("expected empty schedule, got %d", count)
 	}
 }
 
 func TestInitScheduleTimes_WithIPs(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -665,32 +651,33 @@ func TestInitScheduleTimes_WithIPs(t *testing.T) {
 	}
 
 	// 应该有 2 个活跃 IP
-	if len(scheduler.nextSchedule) != 2 {
-		t.Errorf("expected 2 scheduled IPs, got %d", len(scheduler.nextSchedule))
+	count, _ := scheduler.scheduleStore.Count(ctx)
+	if count != 2 {
+		t.Errorf("expected 2 scheduled IPs, got %d", count)
 	}
 
 	// IP 1 (无 LastCrawledAt) 应该立即调度
-	if nextTime, ok := scheduler.nextSchedule[1]; ok {
-		if time.Until(nextTime) > time.Second {
-			t.Error("IP 1 (no last crawl) should be scheduled immediately")
+	if nextTime, ok := scheduler.GetNextScheduleTime(1); ok {
+		if time.Until(nextTime) > 30*time.Second {
+			t.Error("IP 1 (no last crawl) should be scheduled soon")
 		}
 	} else {
 		t.Error("IP 1 should be in schedule")
 	}
 
 	// IP 2 (有 LastCrawledAt) 应该基于权重计算
-	if _, ok := scheduler.nextSchedule[2]; !ok {
+	if _, ok := scheduler.GetNextScheduleTime(2); !ok {
 		t.Error("IP 2 should be in schedule")
 	}
 
 	// IP 3 (paused) 不应该在调度中
-	if _, ok := scheduler.nextSchedule[3]; ok {
+	if _, ok := scheduler.GetNextScheduleTime(3); ok {
 		t.Error("IP 3 (paused) should not be in schedule")
 	}
 }
 
 func TestInitScheduleTimes_WithPastLastCrawled(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -707,9 +694,9 @@ func TestInitScheduleTimes_WithPastLastCrawled(t *testing.T) {
 	}
 
 	// 由于计算出的下次时间已过，应该立即调度
-	if nextTime, ok := scheduler.nextSchedule[1]; ok {
-		if time.Until(nextTime) > time.Second {
-			t.Error("IP with past due schedule should be scheduled immediately")
+	if nextTime, ok := scheduler.GetNextScheduleTime(1); ok {
+		if time.Until(nextTime) > 30*time.Second {
+			t.Error("IP with past due schedule should be scheduled soon")
 		}
 	} else {
 		t.Error("IP 1 should be in schedule")
@@ -721,7 +708,7 @@ func TestInitScheduleTimes_WithPastLastCrawled(t *testing.T) {
 // ============================================================================
 
 func TestGetActiveIPs_Empty(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -736,7 +723,7 @@ func TestGetActiveIPs_Empty(t *testing.T) {
 }
 
 func TestGetActiveIPs_FiltersCorrectly(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -762,7 +749,7 @@ func TestGetActiveIPs_FiltersCorrectly(t *testing.T) {
 // ============================================================================
 
 func TestGetIPByID_Found(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -783,7 +770,7 @@ func TestGetIPByID_Found(t *testing.T) {
 }
 
 func TestGetIPByID_NotFound(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -802,7 +789,7 @@ func TestGetIPByID_NotFound(t *testing.T) {
 // ============================================================================
 
 func TestCheckAndSchedule_SchedulesDueIPs(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -812,17 +799,13 @@ func TestCheckAndSchedule_SchedulesDueIPs(t *testing.T) {
 	db.Exec(`INSERT INTO ip_metadata (id, name, status, weight, created_at, updated_at) VALUES (1, 'Test IP', 'active', 1.0, ?, ?)`, now, now)
 
 	// 设置为过期调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = now.Add(-time.Minute)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, now.Add(-time.Minute))
 
 	// 执行检查
 	scheduler.checkAndSchedule(ctx)
 
 	// 检查是否更新了下次调度时间
-	scheduler.mu.RLock()
-	newTime, ok := scheduler.nextSchedule[1]
-	scheduler.mu.RUnlock()
+	newTime, ok := scheduler.GetNextScheduleTime(1)
 
 	if !ok {
 		t.Error("IP should still be in schedule")
@@ -833,7 +816,7 @@ func TestCheckAndSchedule_SchedulesDueIPs(t *testing.T) {
 }
 
 func TestCheckAndSchedule_SkipsFutureSchedules(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -844,25 +827,22 @@ func TestCheckAndSchedule_SkipsFutureSchedules(t *testing.T) {
 
 	// 设置为未来调度
 	futureTime := now.Add(time.Hour)
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = futureTime
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, futureTime)
 
-	// 执行检查
+	// 执行检查 (不应该处理未来的调度)
 	scheduler.checkAndSchedule(ctx)
 
 	// 检查调度时间没有变化
-	scheduler.mu.RLock()
-	newTime := scheduler.nextSchedule[1]
-	scheduler.mu.RUnlock()
+	newTime, _ := scheduler.GetNextScheduleTime(1)
 
-	if !newTime.Equal(futureTime) {
-		t.Error("future schedule should not be modified")
+	// 允许 1 秒的误差 (因为 Unix timestamp 精度)
+	if newTime.Unix() != futureTime.Unix() {
+		t.Errorf("future schedule should not be modified, got %v, expected %v", newTime, futureTime)
 	}
 }
 
 func TestCheckAndSchedule_RemovesDeletedIP(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -872,17 +852,13 @@ func TestCheckAndSchedule_RemovesDeletedIP(t *testing.T) {
 	db.Exec(`INSERT INTO ip_metadata (id, name, status, created_at, updated_at) VALUES (1, 'Deleted IP', 'deleted', ?, ?)`, now, now)
 
 	// 设置为过期调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = now.Add(-time.Minute)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, now.Add(-time.Minute))
 
 	// 执行检查
 	scheduler.checkAndSchedule(ctx)
 
 	// 已删除的 IP 应该被移除
-	scheduler.mu.RLock()
-	_, ok := scheduler.nextSchedule[1]
-	scheduler.mu.RUnlock()
+	_, ok := scheduler.GetNextScheduleTime(1)
 
 	if ok {
 		t.Error("deleted IP should be removed from schedule")
@@ -890,24 +866,20 @@ func TestCheckAndSchedule_RemovesDeletedIP(t *testing.T) {
 }
 
 func TestCheckAndSchedule_RemovesNonExistentIP(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	now := time.Now()
 
 	// 设置一个不存在的 IP 的调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[999] = now.Add(-time.Minute)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 999, now.Add(-time.Minute))
 
 	// 执行检查
 	scheduler.checkAndSchedule(ctx)
 
 	// 不存在的 IP 应该被移除
-	scheduler.mu.RLock()
-	_, ok := scheduler.nextSchedule[999]
-	scheduler.mu.RUnlock()
+	_, ok := scheduler.GetNextScheduleTime(999)
 
 	if ok {
 		t.Error("non-existent IP should be removed from schedule")
@@ -919,7 +891,7 @@ func TestCheckAndSchedule_RemovesNonExistentIP(t *testing.T) {
 // ============================================================================
 
 func TestPushTasksForIP_Success(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -931,7 +903,6 @@ func TestPushTasksForIP_Success(t *testing.T) {
 		Weight: 1.0,
 	}
 
-	// 没有锚点提供者，应该视为首次抓取
 	err := scheduler.pushTasksForIP(ctx, ip)
 	if err != nil {
 		t.Errorf("pushTasksForIP failed: %v", err)
@@ -939,7 +910,7 @@ func TestPushTasksForIP_Success(t *testing.T) {
 }
 
 func TestPushTasksForIP_EmptyName(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -961,7 +932,7 @@ func TestPushTasksForIP_EmptyName(t *testing.T) {
 // ============================================================================
 
 func TestRefreshActiveIPs_AddsNewIPs(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -976,9 +947,7 @@ func TestRefreshActiveIPs_AddsNewIPs(t *testing.T) {
 	}
 
 	// 新 IP 应该被添加到调度
-	scheduler.mu.RLock()
-	_, ok := scheduler.nextSchedule[1]
-	scheduler.mu.RUnlock()
+	_, ok := scheduler.GetNextScheduleTime(1)
 
 	if !ok {
 		t.Error("new IP should be added to schedule")
@@ -986,17 +955,15 @@ func TestRefreshActiveIPs_AddsNewIPs(t *testing.T) {
 }
 
 func TestRefreshActiveIPs_RemovesInactiveIPs(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	now := time.Now()
 
 	// 预先添加 IP 到调度
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = now.Add(time.Hour)
-	scheduler.nextSchedule[2] = now.Add(time.Hour)
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, now.Add(time.Hour))
+	_ = store.Schedule(ctx, 2, now.Add(time.Hour))
 
 	// 数据库中只有 IP 1 是活跃的
 	db.Exec(`INSERT INTO ip_metadata (id, name, status, created_at, updated_at) VALUES (1, 'Active IP', 'active', ?, ?)`, now, now)
@@ -1006,10 +973,8 @@ func TestRefreshActiveIPs_RemovesInactiveIPs(t *testing.T) {
 		t.Errorf("RefreshActiveIPs failed: %v", err)
 	}
 
-	scheduler.mu.RLock()
-	_, ok1 := scheduler.nextSchedule[1]
-	_, ok2 := scheduler.nextSchedule[2]
-	scheduler.mu.RUnlock()
+	_, ok1 := scheduler.GetNextScheduleTime(1)
+	_, ok2 := scheduler.GetNextScheduleTime(2)
 
 	if !ok1 {
 		t.Error("active IP 1 should remain in schedule")
@@ -1020,7 +985,7 @@ func TestRefreshActiveIPs_RemovesInactiveIPs(t *testing.T) {
 }
 
 func TestRefreshActiveIPs_KeepsExistingSchedule(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, store, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -1028,9 +993,7 @@ func TestRefreshActiveIPs_KeepsExistingSchedule(t *testing.T) {
 
 	// 预先添加 IP 到调度
 	existingTime := now.Add(2 * time.Hour)
-	scheduler.mu.Lock()
-	scheduler.nextSchedule[1] = existingTime
-	scheduler.mu.Unlock()
+	_ = store.Schedule(ctx, 1, existingTime)
 
 	// 数据库中 IP 1 是活跃的
 	db.Exec(`INSERT INTO ip_metadata (id, name, status, created_at, updated_at) VALUES (1, 'Active IP', 'active', ?, ?)`, now, now)
@@ -1041,11 +1004,9 @@ func TestRefreshActiveIPs_KeepsExistingSchedule(t *testing.T) {
 	}
 
 	// 已存在的调度时间不应该被修改
-	scheduler.mu.RLock()
-	currentTime := scheduler.nextSchedule[1]
-	scheduler.mu.RUnlock()
+	currentTime, _ := scheduler.GetNextScheduleTime(1)
 
-	if !currentTime.Equal(existingTime) {
+	if currentTime.Unix() != existingTime.Unix() {
 		t.Error("existing schedule time should not be modified")
 	}
 }
@@ -1055,7 +1016,7 @@ func TestRefreshActiveIPs_KeepsExistingSchedule(t *testing.T) {
 // ============================================================================
 
 func TestStartStop_FullCycle(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1088,7 +1049,7 @@ func TestStartStop_FullCycle(t *testing.T) {
 }
 
 func TestStart_ContextCancellation(t *testing.T) {
-	scheduler, db, cleanup := setupTestScheduler(t)
+	scheduler, db, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	now := time.Now()
@@ -1106,9 +1067,6 @@ func TestStart_ContextCancellation(t *testing.T) {
 
 	// 等待 goroutine 退出
 	time.Sleep(100 * time.Millisecond)
-
-	// 调度器可能仍显示 running（因为 context 取消不会自动设置 running=false）
-	// 但 goroutine 应该已经退出
 }
 
 // ============================================================================
@@ -1116,11 +1074,9 @@ func TestStart_ContextCancellation(t *testing.T) {
 // ============================================================================
 
 func TestJanitorConfig_DefaultValues(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
-	// 测试默认配置: JanitorInterval 可以为 0（未配置），Start 时会使用默认值
-	// 这里只验证 scheduler 创建成功
 	if scheduler == nil {
 		t.Error("scheduler should not be nil")
 	}
@@ -1131,7 +1087,7 @@ func TestJanitorConfig_DefaultValues(t *testing.T) {
 // ============================================================================
 
 func TestRemoveIP_NonExistent(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 移除不存在的 IP 不应 panic
@@ -1144,7 +1100,7 @@ func TestRemoveIP_NonExistent(t *testing.T) {
 }
 
 func TestRemoveIP_Multiple(t *testing.T) {
-	scheduler, _, cleanup := setupTestScheduler(t)
+	scheduler, _, _, cleanup := setupTestScheduler(t)
 	defer cleanup()
 
 	// 添加多个 IP
@@ -1174,5 +1130,44 @@ func TestRemoveIP_Multiple(t *testing.T) {
 	}
 	if _, ok := scheduler.GetNextScheduleTime(3); !ok {
 		t.Error("IP 3 should still exist")
+	}
+}
+
+// ============================================================================
+// ScheduleIP 测试 (新增的 API)
+// ============================================================================
+
+func TestScheduleIP(t *testing.T) {
+	scheduler, _, _, cleanup := setupTestScheduler(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	nextTime := time.Now().Add(time.Hour)
+
+	err := scheduler.ScheduleIP(ctx, 11, nextTime)
+	if err != nil {
+		t.Errorf("ScheduleIP failed: %v", err)
+	}
+
+	gotTime, ok := scheduler.GetNextScheduleTime(11)
+	if !ok {
+		t.Error("IP should be in schedule after ScheduleIP")
+	}
+	if gotTime.Unix() != nextTime.Unix() {
+		t.Errorf("schedule time mismatch: got %v, expected %v", gotTime, nextTime)
+	}
+}
+
+// ============================================================================
+// GetScheduleStore 测试
+// ============================================================================
+
+func TestGetScheduleStore(t *testing.T) {
+	scheduler, _, _, cleanup := setupTestScheduler(t)
+	defer cleanup()
+
+	store := scheduler.GetScheduleStore()
+	if store == nil {
+		t.Error("GetScheduleStore should not return nil")
 	}
 }

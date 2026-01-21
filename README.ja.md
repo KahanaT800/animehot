@@ -94,6 +94,7 @@ graph TB
 
 ```mermaid
 sequenceDiagram
+    participant ZSET as Redis ZSET
     participant SCH as スケジューラー
     participant RQ as Redis Queue
     participant CRW as Crawler (任意)
@@ -101,16 +102,16 @@ sequenceDiagram
     participant PIP as パイプライン
     participant DB as MySQL
 
-    loop 毎時
-        SCH->>SCH: 対象IPをチェック
-        SCH->>RQ: クロールタスクをプッシュ
-    end
+    SCH->>ZSET: 次回スケジュール時刻を取得
+    SCH->>SCH: その時刻まで精確にスリープ
+    SCH->>ZSET: 期限切れIPを取得
+    SCH->>RQ: クロールタスクをプッシュ
 
     loop ワーカーループ
         CRW->>RQ: タスクを取得 (BRPOP)
         CRW->>CRW: ヘッドレスChrome起動
-        CRW->>CRW: on_sale 3ページをクロール
-        CRW->>CRW: sold 3ページをクロール
+        CRW->>CRW: on_sale 5ページをクロール
+        CRW->>CRW: sold 5ページをクロール
         CRW->>RQ: 結果をプッシュ
     end
 
@@ -120,6 +121,7 @@ sequenceDiagram
     SM-->>PIP: 遷移を返却
     PIP->>PIP: 指標を計算 (inflow, outflow, liquidity)
     PIP->>DB: 毎時統計を書き込み
+    PIP->>ZSET: 次回スケジュールを更新 (クローズドループ)
     PIP->>RQ: キャッシュを無効化
 ```
 
@@ -392,30 +394,30 @@ ADMIN_API_KEY=your_secure_api_key
 # データベース
 MYSQL_PASSWORD=your_secure_password
 
-# スケジューラー
-SCHEDULER_BASE_INTERVAL=1h      # 基本クロール間隔
-SCHEDULER_MIN_INTERVAL=15m      # 最小間隔 (ホットIP)
-SCHEDULER_MAX_INTERVAL=1h       # 最大間隔
+# スケジューラー (ZSET永続化 + 精確スリープ)
+SCHEDULER_BASE_INTERVAL=2h      # 基本クロール間隔
+SCHEDULER_MIN_INTERVAL=1h       # 最小間隔 (ホットIP)
+SCHEDULER_MAX_INTERVAL=2h       # 最大間隔
 
 # クローラー
 BROWSER_MAX_CONCURRENCY=2       # 同時ブラウザタブ数
-SCHEDULER_PAGES_ON_SALE=3       # クロールページ数 (販売中)
-SCHEDULER_PAGES_SOLD=3          # クロールページ数 (売却済み)
+SCHEDULER_PAGES_ON_SALE=5       # クロールページ数 (販売中)
+SCHEDULER_PAGES_SOLD=5          # クロールページ数 (売却済み)
 ```
 
 ### 動的間隔調整
 
-スケジューラーはアクティビティに基づいてクロール頻度を自動調整:
+スケジューラーはアクティビティに基づいてクロール頻度を自動調整 (Redis ZSETにクローズドループ更新):
 
 | 条件 | アクション |
 |------|-----------|
 | inflow > 100×pages または outflow > 100×pages | 加速 (-15分) |
 | inflow < 50×pages かつ outflow < 3×pages | 減速 (+15分) |
-| その他 | 1時間に回帰 |
+| その他 | 2時間に回帰 |
 
-デフォルト3+3ページの場合:
-- **加速**: inflow > 300 または outflow > 300
-- **減速**: inflow < 150 かつ outflow < 9
+デフォルト5+5ページの場合:
+- **加速**: inflow > 500 または outflow > 500
+- **減速**: inflow < 250 かつ outflow < 15
 
 ## Makeコマンド
 

@@ -100,6 +100,7 @@ graph TB
 
 ```mermaid
 sequenceDiagram
+    participant ZSET as Redis ZSET
     participant SCH as 调度器
     participant RQ as Redis 队列
     participant CRW as 爬虫 (任意节点)
@@ -107,16 +108,16 @@ sequenceDiagram
     participant PIP as 处理管道
     participant DB as MySQL
 
-    loop 每小时
-        SCH->>SCH: 检查到期的IP
-        SCH->>RQ: 推送爬取任务
-    end
+    SCH->>ZSET: 查询最近调度时间
+    SCH->>SCH: 精确睡眠到该时间
+    SCH->>ZSET: 获取到期的IP
+    SCH->>RQ: 推送爬取任务
 
     loop 爬虫循环
         CRW->>RQ: 拉取任务 (BRPOP)
         CRW->>CRW: 启动无头浏览器
-        CRW->>CRW: 爬取在售页面 x3
-        CRW->>CRW: 爬取已售页面 x3
+        CRW->>CRW: 爬取在售页面 x5
+        CRW->>CRW: 爬取已售页面 x5
         CRW->>RQ: 推送结果
     end
 
@@ -126,6 +127,7 @@ sequenceDiagram
     SM-->>PIP: 返回变化记录
     PIP->>PIP: 计算指标 (流入/流出/流动性)
     PIP->>DB: 写入小时统计
+    PIP->>ZSET: 闭环更新下次调度时间
     PIP->>RQ: 清除相关缓存
 ```
 
@@ -398,30 +400,30 @@ ADMIN_API_KEY=your_secure_api_key
 # 数据库
 MYSQL_PASSWORD=your_secure_password
 
-# 调度器
-SCHEDULER_BASE_INTERVAL=1h      # 基础爬取间隔
-SCHEDULER_MIN_INTERVAL=15m      # 最小间隔 (热门IP)
-SCHEDULER_MAX_INTERVAL=1h       # 最大间隔
+# 调度器 (ZSET 持久化 + 精确睡眠)
+SCHEDULER_BASE_INTERVAL=2h      # 基础爬取间隔
+SCHEDULER_MIN_INTERVAL=1h       # 最小间隔 (热门IP)
+SCHEDULER_MAX_INTERVAL=2h       # 最大间隔
 
 # 爬虫
 BROWSER_MAX_CONCURRENCY=2       # 同时开的浏览器标签页数
-SCHEDULER_PAGES_ON_SALE=3       # 每次爬取在售页数
-SCHEDULER_PAGES_SOLD=3          # 每次爬取已售页数
+SCHEDULER_PAGES_ON_SALE=5       # 每次爬取在售页数
+SCHEDULER_PAGES_SOLD=5          # 每次爬取已售页数
 ```
 
 ### 动态间隔调整
 
-调度器会根据活跃度自动调整爬取频率:
+调度器会根据活跃度自动调整爬取频率 (闭环更新到 Redis ZSET):
 
 | 条件 | 动作 |
 |------|------|
 | 流入 > 100×页数 或 流出 > 100×页数 | 加速 (-15分钟) |
 | 流入 < 50×页数 且 流出 < 3×页数 | 减速 (+15分钟) |
-| 其他情况 | 向1小时回归 |
+| 其他情况 | 向2小时回归 |
 
-默认 3+3 页配置下:
-- **加速条件**: 流入 > 300 或 流出 > 300
-- **减速条件**: 流入 < 150 且 流出 < 9
+默认 5+5 页配置下:
+- **加速条件**: 流入 > 500 或 流出 > 500
+- **减速条件**: 流入 < 250 且 流出 < 15
 
 ## Make 命令
 

@@ -16,6 +16,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// IPScheduler 调度器接口 (用于闭环调度)
+type IPScheduler interface {
+	ScheduleIP(ctx context.Context, ipID uint64, nextTime time.Time) error
+}
+
 // Pipeline 结果处理管道
 // 将爬虫结果串联到分析链: CrawlResponse → StateMachine → Aggregator
 type Pipeline struct {
@@ -25,6 +30,7 @@ type Pipeline struct {
 	stateMachine     *StateMachine
 	intervalAdjuster *IntervalAdjuster
 	cacheManager     *LeaderboardCacheManager
+	scheduler        IPScheduler // 调度器 (用于闭环更新调度时间)
 	config           *PipelineConfig
 
 	// 内部状态
@@ -88,12 +94,14 @@ type PipelineStats struct {
 }
 
 // NewPipeline 创建结果处理管道
+// scheduler 参数可选，传入后启用闭环调度
 func NewPipeline(
 	db *gorm.DB,
 	rdb *redis.Client,
 	queue *redisqueue.Client,
 	analyzerCfg *config.AnalyzerConfig,
 	pipelineCfg *PipelineConfig,
+	scheduler IPScheduler,
 ) *Pipeline {
 	if pipelineCfg == nil {
 		pipelineCfg = DefaultPipelineConfig()
@@ -124,6 +132,7 @@ func NewPipeline(
 		stateMachine:     stateMachine,
 		intervalAdjuster: intervalAdjuster,
 		cacheManager:     cacheManager,
+		scheduler:        scheduler,
 		config:           pipelineCfg,
 		stopCh:           make(chan struct{}),
 	}
@@ -383,7 +392,8 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 		return nil
 	})
 
-	// 自动调整爬取间隔
+	// 自动调整爬取间隔 + 闭环更新调度时间
+	var newWeight float64 = 1.0
 	if p.intervalAdjuster != nil {
 		g3.Go(func() error {
 			currentWeight, err := p.intervalAdjuster.GetCurrentWeight(ctx3, ipID)
@@ -391,15 +401,48 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 				p.recordError(fmt.Sprintf("get current weight (ip=%d): %v", ipID, err))
 				return nil
 			}
-			_, adjustErr := p.intervalAdjuster.Adjust(ctx3, ipID, currentWeight, inflow, summary.Sold, isFirstCrawl)
+			result, adjustErr := p.intervalAdjuster.Adjust(ctx3, ipID, currentWeight, inflow, summary.Sold, isFirstCrawl)
 			if adjustErr != nil {
 				p.recordError(fmt.Sprintf("adjust interval (ip=%d): %v", ipID, adjustErr))
+			}
+			// 记录调整后的权重用于闭环调度
+			if result != nil {
+				newWeight = result.NewWeight
+			} else {
+				newWeight = currentWeight
 			}
 			return nil
 		})
 	}
 
 	_ = g3.Wait() // 忽略错误，已记录
+
+	// ========== Phase 3.5: 闭环调度 ==========
+	// 处理完成后更新 Redis ZSET 中的下次调度时间
+	if p.scheduler != nil {
+		nextInterval := p.config.IntervalAdjuster.BaseInterval
+		if newWeight > 0 {
+			nextInterval = time.Duration(float64(p.config.IntervalAdjuster.BaseInterval) / newWeight)
+		}
+		// 限制在合理范围内
+		if nextInterval < p.config.IntervalAdjuster.MinInterval {
+			nextInterval = p.config.IntervalAdjuster.MinInterval
+		}
+		if nextInterval > p.config.IntervalAdjuster.MaxInterval {
+			nextInterval = p.config.IntervalAdjuster.MaxInterval
+		}
+		nextTime := time.Now().Add(nextInterval)
+		if err := p.scheduler.ScheduleIP(ctx, ipID, nextTime); err != nil {
+			slog.Warn("failed to update schedule",
+				slog.Uint64("ip_id", ipID),
+				slog.String("error", err.Error()))
+		} else {
+			slog.Debug("schedule updated",
+				slog.Uint64("ip_id", ipID),
+				slog.Duration("next_interval", nextInterval),
+				slog.Time("next_time", nextTime))
+		}
+	}
 
 	// ========== Phase 4: 缓存失效 ==========
 	// 数据更新后，失效相关缓存

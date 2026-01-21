@@ -93,6 +93,7 @@ graph TB
 
 ```mermaid
 sequenceDiagram
+    participant ZSET as Redis ZSET
     participant SCH as Scheduler
     participant RQ as Redis Queue
     participant CRW as Crawler (Any)
@@ -100,16 +101,16 @@ sequenceDiagram
     participant PIP as Pipeline
     participant DB as MySQL
 
-    loop Every Hour
-        SCH->>SCH: Check due IPs
-        SCH->>RQ: Push crawl tasks
-    end
+    SCH->>ZSET: Query next schedule time
+    SCH->>SCH: Precise sleep until that time
+    SCH->>ZSET: Get due IPs
+    SCH->>RQ: Push crawl tasks
 
     loop Worker Loop
         CRW->>RQ: Pull task (BRPOP)
         CRW->>CRW: Launch headless Chrome
-        CRW->>CRW: Crawl 3 pages on_sale
-        CRW->>CRW: Crawl 3 pages sold
+        CRW->>CRW: Crawl 5 pages on_sale
+        CRW->>CRW: Crawl 5 pages sold
         CRW->>RQ: Push result
     end
 
@@ -119,6 +120,7 @@ sequenceDiagram
     SM-->>PIP: Return transitions
     PIP->>PIP: Calculate metrics<br/>(inflow, outflow, liquidity)
     PIP->>DB: Write hourly stats
+    PIP->>ZSET: Update next schedule (closed-loop)
     PIP->>RQ: Invalidate cache
 ```
 
@@ -391,30 +393,30 @@ ADMIN_API_KEY=your_secure_api_key
 # Database
 MYSQL_PASSWORD=your_secure_password
 
-# Scheduler
-SCHEDULER_BASE_INTERVAL=1h      # Base crawl interval
-SCHEDULER_MIN_INTERVAL=15m      # Min interval (hot IPs)
-SCHEDULER_MAX_INTERVAL=1h       # Max interval
+# Scheduler (ZSET persistence + precise sleep)
+SCHEDULER_BASE_INTERVAL=2h      # Base crawl interval
+SCHEDULER_MIN_INTERVAL=1h       # Min interval (hot IPs)
+SCHEDULER_MAX_INTERVAL=2h       # Max interval
 
 # Crawler
 BROWSER_MAX_CONCURRENCY=2       # Concurrent browser tabs
-SCHEDULER_PAGES_ON_SALE=3       # Pages to crawl (on sale)
-SCHEDULER_PAGES_SOLD=3          # Pages to crawl (sold)
+SCHEDULER_PAGES_ON_SALE=5       # Pages to crawl (on sale)
+SCHEDULER_PAGES_SOLD=5          # Pages to crawl (sold)
 ```
 
 ### Dynamic Interval Adjustment
 
-The scheduler automatically adjusts crawl frequency based on activity:
+The scheduler automatically adjusts crawl frequency based on activity (closed-loop update to Redis ZSET):
 
 | Condition | Action |
 |-----------|--------|
 | inflow > 100×pages OR outflow > 100×pages | Speed up (-15min) |
 | inflow < 50×pages AND outflow < 3×pages | Slow down (+15min) |
-| Otherwise | Regress to 1h |
+| Otherwise | Regress to 2h |
 
-With default 3+3 pages:
-- **Speed up**: inflow > 300 OR outflow > 300
-- **Slow down**: inflow < 150 AND outflow < 9
+With default 5+5 pages:
+- **Speed up**: inflow > 500 OR outflow > 500
+- **Slow down**: inflow < 250 AND outflow < 15
 
 ## Make Commands
 
