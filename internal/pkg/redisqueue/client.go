@@ -238,7 +238,7 @@ var ackTaskScript = redis.NewScript(`
 	local removed = 0
 	for _, task in ipairs(tasks) do
 		-- 检查 JSON 中是否包含该 task_id
-		if string.find(task, '"taskId":"' .. taskId .. '"') then
+		if string.find(task, '"taskId":"' .. taskId .. '"', 1, true) then
 			redis.call('LREM', queue, 1, task)
 			removed = removed + 1
 			break
@@ -297,7 +297,7 @@ var ackResultScript = redis.NewScript(`
 	local removed = 0
 	for _, result in ipairs(results) do
 		-- 检查 JSON 中是否包含该 task_id
-		if string.find(result, '"taskId":"' .. taskId .. '"') then
+		if string.find(result, '"taskId":"' .. taskId .. '"', 1, true) then
 			redis.call('LREM', queue, 1, result)
 			removed = removed + 1
 			break
