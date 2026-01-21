@@ -362,6 +362,24 @@ func (s *Service) doCrawl(ctx context.Context, req *pb.CrawlRequest, attempt int
 		slog.Int("pages_sold", int(req.GetPagesSold())))
 	response, err = s.crawlWithFixedPages(ctx, req)
 
+	// ========== 更新任务计数（无论成功失败，首次调用时）==========
+	// 注意：必须在处理结果之前更新计数，确保所有处理过的任务都被计算
+	if attempt == 0 && s.maxTasks > 0 {
+		newCount := s.taskCounter.Add(1)
+		metrics.CrawlerTasksProcessedCurrent.Set(float64(newCount))
+		if newCount >= s.maxTasks {
+			select {
+			case s.restartCh <- struct{}{}:
+				s.logger.Info("max tasks reached, signaling shutdown",
+					slog.Uint64("count", newCount),
+					slog.Uint64("limit", s.maxTasks))
+			default:
+				s.logger.Debug("restart signal already pending, skipping",
+					slog.Uint64("count", newCount))
+			}
+		}
+	}
+
 	// ========== 处理成功 ==========
 	if err == nil {
 		s.resetConsecutiveFailures()
@@ -373,23 +391,6 @@ func (s *Service) doCrawl(ctx context.Context, req *pb.CrawlRequest, attempt int
 			if response != nil {
 				response.TaskId = taskID
 				response.CrawledAt = time.Now().Unix()
-			}
-
-			// 更新任务计数，检查是否需要重启
-			if s.maxTasks > 0 {
-				newCount := s.taskCounter.Add(1)
-				metrics.CrawlerTasksProcessedCurrent.Set(float64(newCount))
-				if newCount >= s.maxTasks {
-					select {
-					case s.restartCh <- struct{}{}:
-						s.logger.Info("max tasks reached, signaling shutdown",
-							slog.Uint64("count", newCount),
-							slog.Uint64("limit", s.maxTasks))
-					default:
-						s.logger.Debug("restart signal already pending, skipping",
-							slog.Uint64("count", newCount))
-					}
-				}
 			}
 
 			recordMetrics("success", nil)

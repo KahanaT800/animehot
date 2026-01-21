@@ -17,7 +17,7 @@ let leaderboardOutflow = [];
 let leaderboardInflow = [];
 let leaderboardHot = [];
 let ipStats24h = {};  // 聚合数据 (用于 ALL IPs 表格和泡泡图)
-let currentTimeRange = 24;  // 当前时间范围 (小时): 1, 24, 168
+let currentTimeRange = 24;  // 当前时间范围 (小时): 2, 24, 168
 let selectedIP = null;
 let bubbleChart = null;
 let gapChart = null;
@@ -297,6 +297,9 @@ async function loadOverviewData() {
                 }
             })
         );
+
+        // 更新时间范围标签 (确保与 currentTimeRange 同步)
+        updatePeriodLabels();
 
         updateMetricCards();
         renderLeaderboards();
