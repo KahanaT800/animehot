@@ -126,16 +126,18 @@ server {
     }
 
     # ========================================================================
-    # 静态文件 (如果启用前端)
+    # 静态文件 (ETag 验证缓存)
     # ========================================================================
     location /static/ {
         proxy_pass http://analyzer_backend;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
 
-        # 静态文件缓存
-        expires 7d;
-        add_header Cache-Control "public, immutable";
+        # ETag 验证缓存：浏览器每次请求时验证文件是否变化
+        # - 文件未变：服务器返回 304 Not Modified（无需重新下载）
+        # - 文件已变：服务器返回 200 + 新内容
+        etag on;
+        add_header Cache-Control "no-cache";
     }
 
     # ========================================================================
