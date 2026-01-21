@@ -51,6 +51,7 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 		default:
 		}
 
+		pageStart := time.Now()
 		url := BuildMercariURLWithStatus(keyword, pb.ItemStatus_ITEM_STATUS_ON_SALE, page)
 		items, err := s.fetchPageContent(ctx, browser, req, url, PageFetchOptions{
 			SkipHumanize:       page > 0, // 只有第一页模拟人类行为
@@ -63,6 +64,7 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 			s.logger.Warn("on_sale page failed",
 				slog.String("task_id", taskID),
 				slog.Int("page", page),
+				slog.Duration("duration", time.Since(pageStart)),
 				slog.String("error", err.Error()))
 			// 继续尝试下一页（或停止，取决于错误类型）
 			continue
@@ -76,10 +78,11 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 		allItems = append(allItems, items...)
 		totalPagesCrawled++
 
-		s.logger.Debug("on_sale page completed",
+		s.logger.Info("on_sale page completed",
 			slog.String("task_id", taskID),
 			slog.Int("page", page),
-			slog.Int("items", len(items)))
+			slog.Int("items", len(items)),
+			slog.Duration("duration", time.Since(pageStart)))
 
 		// 如果返回空页，说明已到末尾
 		if len(items) == 0 {
@@ -109,6 +112,7 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 		default:
 		}
 
+		pageStart := time.Now()
 		url := BuildMercariURLWithStatus(keyword, pb.ItemStatus_ITEM_STATUS_SOLD, page)
 		items, err := s.fetchPageContent(ctx, browser, req, url, PageFetchOptions{
 			SkipHumanize:       true, // sold 页面不需要模拟（已经在 on_sale 做过）
@@ -121,6 +125,7 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 			s.logger.Warn("sold page failed",
 				slog.String("task_id", taskID),
 				slog.Int("page", page),
+				slog.Duration("duration", time.Since(pageStart)),
 				slog.String("error", err.Error()))
 			continue
 		}
@@ -134,10 +139,11 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 		totalPagesCrawled++
 		soldPagesCrawled++
 
-		s.logger.Debug("sold page completed",
+		s.logger.Info("sold page completed",
 			slog.String("task_id", taskID),
 			slog.Int("page", page),
-			slog.Int("items", len(items)))
+			slog.Int("items", len(items)),
+			slog.Duration("duration", time.Since(pageStart)))
 
 		// 如果返回空页，说明已到末尾
 		if len(items) == 0 {

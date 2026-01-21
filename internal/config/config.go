@@ -89,7 +89,8 @@ type BrowserConfig struct {
 	Headless          bool          `json:"headless"`           // 是否使用无头模式
 	MaxConcurrency    int           `json:"max_concurrency"`    // 最大并发页面数 (跨任务)
 	MaxFetchCount     int           `json:"max_fetch_count"`    // 每次爬取最大数量
-	PageTimeout       time.Duration `json:"page_timeout"`       // 页面加载超时
+	PageTimeout       time.Duration `json:"page_timeout"`       // 单页加载超时
+	TaskTimeout       time.Duration `json:"task_timeout"`       // 单任务总超时 (所有页面串行)
 	DebugScreenshot   bool          `json:"debug_screenshot"`   // 是否启用调试截图
 	ScreenshotTimeout time.Duration `json:"screenshot_timeout"` // 截图操作超时
 }
@@ -180,7 +181,8 @@ func DefaultConfig() *Config {
 			Headless:          true,
 			MaxConcurrency:    3,
 			MaxFetchCount:     120,
-			PageTimeout:       60 * time.Second, // 单页加载超时（6页串行任务总计约6分钟）
+			PageTimeout:       60 * time.Second, // 单页加载超时
+			TaskTimeout:       12 * time.Minute, // 单任务总超时 (10页串行，每页约1分钟，含缓冲)
 			DebugScreenshot:   false,
 			ScreenshotTimeout: 15 * time.Second,
 		},
@@ -503,6 +505,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("BROWSER_PAGE_TIMEOUT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.Browser.PageTimeout = d
+		}
+	}
+	if v := os.Getenv("BROWSER_TASK_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Browser.TaskTimeout = d
 		}
 	}
 

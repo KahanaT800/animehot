@@ -33,9 +33,7 @@ const (
 	browserHealthTimeout   = 5 * time.Second        // 健康检查单次超时
 	stuckTaskCheckInterval = 1 * time.Minute        // 卡住任务检查间隔
 	stuckTaskRescueTimeout = 10 * time.Second       // 卡住任务恢复超时
-	stuckTaskThreshold     = 15 * time.Minute       // 任务被认定为卡住的阈值（需大于 taskTimeout + watchdogTimeout）
-	taskTimeout            = 6 * time.Minute        // 单个任务最大执行时间（6页串行，每页约1分钟）
-	watchdogTimeout        = 7 * time.Minute        // 看门狗超时（比任务超时多1分钟）
+	defaultTaskTimeout     = 12 * time.Minute       // 单个任务默认超时（10页串行，每页约1分钟，含缓冲）
 	pageCreateTimeout      = 10 * time.Second       // 页面创建超时
 	stealthScriptTimeout   = 5 * time.Second        // Stealth 脚本应用超时
 	redisOperationTimeout  = 5 * time.Second        // Redis 操作超时
@@ -109,6 +107,11 @@ type Service struct {
 
 	// 截图超时（可配置）
 	screenshotTimeout time.Duration
+
+	// 任务超时（可配置）
+	taskTimeout        time.Duration
+	watchdogTimeout    time.Duration
+	stuckTaskThreshold time.Duration // 任务被认定为卡住的阈值（taskTimeout + watchdogTimeout + 缓冲）
 }
 
 // crawlerStats 爬虫统计信息
@@ -224,6 +227,14 @@ func NewService(ctx context.Context, cfg *config.Config, logger *slog.Logger, re
 		screenshotTimeout = defaultScreenshotTimeout
 	}
 
+	// 任务超时配置（使用配置值或默认值）
+	taskTimeout := cfg.Browser.TaskTimeout
+	if taskTimeout <= 0 {
+		taskTimeout = defaultTaskTimeout
+	}
+	watchdogTimeout := taskTimeout + 1*time.Minute      // 看门狗超时比任务超时多1分钟
+	stuckTaskThreshold := taskTimeout + watchdogTimeout // 卡住阈值 = 任务超时 + 看门狗超时
+
 	service := &Service{
 		browser:               browser,
 		rdb:                   rdb,
@@ -245,10 +256,15 @@ func NewService(ctx context.Context, cfg *config.Config, logger *slog.Logger, re
 		cookieManager:         NewCookieManager(rdb, logger),
 		adaptiveThrottler:     NewAdaptiveThrottler(rdb, logger),
 		screenshotTimeout:     screenshotTimeout,
+		taskTimeout:           taskTimeout,
+		watchdogTimeout:       watchdogTimeout,
+		stuckTaskThreshold:    stuckTaskThreshold,
 	}
 	metrics.CrawlerProxyMode.Set(0)
 	logger.Info("crawler service configured",
 		slog.String("user_agent", selectedUA),
+		slog.Duration("task_timeout", taskTimeout),
+		slog.Duration("page_timeout", pageTimeout),
 		slog.Int("proxy_failure_threshold", proxyFailureThreshold),
 		slog.Bool("proxy_auto_switch", cfg.App.ProxyAutoSwitch))
 

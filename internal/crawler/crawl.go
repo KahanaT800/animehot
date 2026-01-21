@@ -73,7 +73,7 @@ func (s *Service) StartWorker(ctx context.Context) error {
 				select {
 				case <-done:
 					// 任务正常完成
-				case <-time.After(watchdogTimeout):
+				case <-time.After(s.watchdogTimeout):
 					// 看门狗超时触发 - 仅记录日志和 watchdog 专用指标
 					s.logger.Error("watchdog timeout triggered, task stuck",
 						slog.String("task_id", taskID),
@@ -114,7 +114,7 @@ func (s *Service) StartWorker(ctx context.Context) error {
 			}()
 
 			// 为每个任务设置独立的上下文
-			taskCtx, cancel := context.WithTimeout(context.Background(), taskTimeout)
+			taskCtx, cancel := context.WithTimeout(context.Background(), s.taskTimeout)
 			defer cancel()
 
 			// 使用带超时的 channel 包装 FetchItems 调用

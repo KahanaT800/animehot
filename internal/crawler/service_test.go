@@ -455,7 +455,7 @@ func TestServiceRestartSignal(t *testing.T) {
 
 func TestTimeoutConstants(t *testing.T) {
 	// 确保超时常量值合理
-	// 注意: taskTimeout 设为 6 分钟以支持 6 页串行爬取（每页约 1 分钟）
+	// 注意: taskTimeout 和 watchdogTimeout 现在是可配置的，通过 BROWSER_TASK_TIMEOUT 环境变量
 	tests := []struct {
 		name     string
 		value    time.Duration
@@ -465,8 +465,7 @@ func TestTimeoutConstants(t *testing.T) {
 		{"browserInitTimeout", browserInitTimeout, 10 * time.Second, 2 * time.Minute},
 		{"browserHealthInterval", browserHealthInterval, 10 * time.Second, 5 * time.Minute},
 		{"browserHealthTimeout", browserHealthTimeout, 1 * time.Second, 30 * time.Second},
-		{"taskTimeout", taskTimeout, 3 * time.Minute, 10 * time.Minute},     // 6页串行需要足够时间
-		{"watchdogTimeout", watchdogTimeout, taskTimeout, 10 * time.Minute}, // 必须大于 taskTimeout
+		{"defaultTaskTimeout", defaultTaskTimeout, 10 * time.Minute, 15 * time.Minute}, // 默认12分钟，支持10页串行
 		{"pageCreateTimeout", pageCreateTimeout, 5 * time.Second, 1 * time.Minute},
 		{"redisOperationTimeout", redisOperationTimeout, 1 * time.Second, 30 * time.Second},
 		{"redisShortTimeout", redisShortTimeout, 1 * time.Second, 10 * time.Second},
@@ -481,11 +480,6 @@ func TestTimeoutConstants(t *testing.T) {
 				t.Errorf("%s = %v, should be <= %v", tt.name, tt.value, tt.maxValue)
 			}
 		})
-	}
-
-	// 确保 watchdog 超时大于任务超时
-	if watchdogTimeout <= taskTimeout {
-		t.Errorf("watchdogTimeout (%v) should be > taskTimeout (%v)", watchdogTimeout, taskTimeout)
 	}
 }
 

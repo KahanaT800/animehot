@@ -200,7 +200,7 @@ func (s *Service) startStuckTaskCleanup(ctx context.Context) {
 			return
 		case <-ticker.C:
 			rescueCtx, cancel := context.WithTimeout(ctx, stuckTaskRescueTimeout)
-			result, err := s.redisQueue.RescueStuckTasks(rescueCtx, stuckTaskThreshold)
+			result, err := s.redisQueue.RescueStuckTasks(rescueCtx, s.stuckTaskThreshold)
 			cancel()
 			if err != nil {
 				s.logger.Warn("failed to rescue stuck tasks", slog.String("error", err.Error()))
