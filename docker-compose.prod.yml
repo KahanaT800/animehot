@@ -122,7 +122,7 @@ services:
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-info}
       APP_HTTP_ADDR: ":8080"
       APP_METRICS_ADDR: ":2112"
-      APP_WORKER_POOL_SIZE: ${APP_WORKER_POOL_SIZE:-4}
+      APP_WORKER_POOL_SIZE: ${APP_WORKER_POOL_SIZE:-2}
       DEBUG: "false"
       AUTO_MIGRATE: "true"
       TZ: Asia/Tokyo
@@ -181,6 +181,7 @@ services:
     image: ${CRAWLER_IMAGE:-ghcr.io/kahanat800/animehot/crawler:latest}
     container_name: animehot-crawler
     restart: always
+    init: true  # 自动回收僵尸进程
     stop_grace_period: 2m
     logging:
       driver: "json-file"

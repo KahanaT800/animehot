@@ -1204,3 +1204,227 @@ func TestClient_PushResult_Nil(t *testing.T) {
 		t.Errorf("expected error for nil result, got nil")
 	}
 }
+
+// ============================================================================
+// 启动恢复 (Startup Recovery) 测试
+// ============================================================================
+
+func TestClient_RecoverOrphanedResults(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client, _ := NewClientWithRedis(rdb)
+	ctx := context.Background()
+
+	// 模拟残留在 processing 队列中的结果
+	res1 := &pb.CrawlResponse{
+		TaskId: "orphan-result-1",
+		IpId:   1,
+	}
+	res2 := &pb.CrawlResponse{
+		TaskId: "orphan-result-2",
+		IpId:   2,
+	}
+
+	// 直接推送到 processing queue（模拟服务重启后的残留）
+	if err := client.PushResult(ctx, res1); err != nil {
+		t.Fatalf("PushResult failed: %v", err)
+	}
+	_, _ = client.PopResult(ctx, 100*time.Millisecond) // 移到 processing queue
+
+	if err := client.PushResult(ctx, res2); err != nil {
+		t.Fatalf("PushResult failed: %v", err)
+	}
+	_, _ = client.PopResult(ctx, 100*time.Millisecond) // 移到 processing queue
+
+	// 设置 started hash（模拟正常处理流程）
+	rdb.HSet(ctx, KeyResultStartedHash, "orphan-result-1", time.Now().Unix())
+
+	// 验证 processing queue 有 2 个
+	procLen, _ := rdb.LLen(ctx, KeyResultProcessingQueue).Result()
+	if procLen != 2 {
+		t.Errorf("expected 2 results in processing queue, got %d", procLen)
+	}
+
+	// 执行恢复
+	recovered, err := client.RecoverOrphanedResults(ctx)
+	if err != nil {
+		t.Fatalf("RecoverOrphanedResults failed: %v", err)
+	}
+	if recovered != 2 {
+		t.Errorf("expected 2 recovered, got %d", recovered)
+	}
+
+	// processing queue 应该为空
+	procLen, _ = rdb.LLen(ctx, KeyResultProcessingQueue).Result()
+	if procLen != 0 {
+		t.Errorf("expected 0 results in processing queue after recovery, got %d", procLen)
+	}
+
+	// 主队列应该有 2 个
+	_, results, _ := client.QueueDepth(ctx)
+	if results != 2 {
+		t.Errorf("expected 2 results in main queue, got %d", results)
+	}
+
+	// started hash 应该被清理
+	exists, _ := rdb.HExists(ctx, KeyResultStartedHash, "orphan-result-1").Result()
+	if exists {
+		t.Error("started hash should be cleared after recovery")
+	}
+}
+
+func TestClient_RecoverOrphanedTasks(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client, _ := NewClientWithRedis(rdb)
+	ctx := context.Background()
+
+	// 模拟残留在 processing 队列中的任务
+	req1 := &pb.CrawlRequest{
+		TaskId:  "orphan-task-1",
+		IpId:    1,
+		Keyword: "test1",
+	}
+	req2 := &pb.CrawlRequest{
+		TaskId:  "orphan-task-2",
+		IpId:    2,
+		Keyword: "test2",
+	}
+
+	// 推送并弹出（移到 processing queue）
+	if err := client.PushTask(ctx, req1); err != nil {
+		t.Fatalf("PushTask failed: %v", err)
+	}
+	_, _ = client.PopTask(ctx, 100*time.Millisecond)
+
+	if err := client.PushTask(ctx, req2); err != nil {
+		t.Fatalf("PushTask failed: %v", err)
+	}
+	_, _ = client.PopTask(ctx, 100*time.Millisecond)
+
+	// 验证 processing queue 有 2 个
+	procLen, _ := rdb.LLen(ctx, KeyTaskProcessingQueue).Result()
+	if procLen != 2 {
+		t.Errorf("expected 2 tasks in processing queue, got %d", procLen)
+	}
+
+	// 执行恢复
+	recovered, err := client.RecoverOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("RecoverOrphanedTasks failed: %v", err)
+	}
+	if recovered != 2 {
+		t.Errorf("expected 2 recovered, got %d", recovered)
+	}
+
+	// processing queue 应该为空
+	procLen, _ = rdb.LLen(ctx, KeyTaskProcessingQueue).Result()
+	if procLen != 0 {
+		t.Errorf("expected 0 tasks in processing queue after recovery, got %d", procLen)
+	}
+
+	// 主队列应该有 2 个
+	tasks, _, _ := client.QueueDepth(ctx)
+	if tasks != 2 {
+		t.Errorf("expected 2 tasks in main queue, got %d", tasks)
+	}
+
+	// started hash 应该被清理
+	exists, _ := rdb.HExists(ctx, KeyTaskStartedHash, "orphan-task-1").Result()
+	if exists {
+		t.Error("started hash should be cleared after recovery")
+	}
+}
+
+func TestClient_RecoverOrphanedResults_Empty(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client, _ := NewClientWithRedis(rdb)
+	ctx := context.Background()
+
+	// 空的 processing queue
+	recovered, err := client.RecoverOrphanedResults(ctx)
+	if err != nil {
+		t.Fatalf("RecoverOrphanedResults failed: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered from empty queue, got %d", recovered)
+	}
+}
+
+func TestClient_RecoverOrphanedTasks_Empty(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client, _ := NewClientWithRedis(rdb)
+	ctx := context.Background()
+
+	// 空的 processing queue
+	recovered, err := client.RecoverOrphanedTasks(ctx)
+	if err != nil {
+		t.Fatalf("RecoverOrphanedTasks failed: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered from empty queue, got %d", recovered)
+	}
+}
+
+func TestClient_RecoverOrphanedResults_DoesNotIncrementRetry(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client, _ := NewClientWithRedis(rdb)
+	ctx := context.Background()
+
+	// 模拟有 RetryCount 的结果
+	res := &pb.CrawlResponse{
+		TaskId:     "retry-test",
+		IpId:       1,
+		RetryCount: 2, // 已经重试 2 次
+	}
+
+	if err := client.PushResult(ctx, res); err != nil {
+		t.Fatalf("PushResult failed: %v", err)
+	}
+	_, _ = client.PopResult(ctx, 100*time.Millisecond)
+
+	// 执行恢复
+	_, err = client.RecoverOrphanedResults(ctx)
+	if err != nil {
+		t.Fatalf("RecoverOrphanedResults failed: %v", err)
+	}
+
+	// 再次弹出检查 RetryCount
+	recovered, err := client.PopResult(ctx, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("PopResult after recovery failed: %v", err)
+	}
+
+	// RetryCount 应该不变（恢复不惩罚任务）
+	if recovered.RetryCount != 2 {
+		t.Errorf("expected RetryCount 2 after recovery, got %d", recovered.RetryCount)
+	}
+}

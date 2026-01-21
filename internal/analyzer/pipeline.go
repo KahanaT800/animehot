@@ -149,6 +149,16 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	p.stopCh = make(chan struct{})
 	p.mu.Unlock()
 
+	// 启动时恢复残留在 processing 队列中的结果
+	// 这是为了处理服务重启后未 ACK 的结果
+	if recovered, err := p.queue.RecoverOrphanedResults(ctx); err != nil {
+		slog.Warn("failed to recover orphaned results",
+			slog.String("error", err.Error()))
+	} else if recovered > 0 {
+		slog.Info("recovered orphaned results on startup",
+			slog.Int("count", recovered))
+	}
+
 	// 启动多个 worker
 	for i := 0; i < p.config.Workers; i++ {
 		p.wg.Add(1)
@@ -202,9 +212,9 @@ const processedTTL = 24 * time.Hour
 func (p *Pipeline) processOne(ctx context.Context) {
 	// 从队列弹出结果 (移到 processing queue)
 	resp, err := p.queue.PopResult(ctx, p.config.PopTimeout)
-	// Debug log for troubleshooting
+	// INFO log for troubleshooting (temporary)
 	if err == nil && resp != nil {
-		slog.Debug("popped result from queue",
+		slog.Info("popped result from queue",
 			slog.Uint64("ip_id", resp.GetIpId()),
 			slog.String("task_id", resp.GetTaskId()),
 			slog.Int("items", len(resp.GetItems())))
@@ -226,6 +236,9 @@ func (p *Pipeline) processOne(ctx context.Context) {
 		processed, err := p.queue.IsProcessed(ctx, taskID)
 		if err == nil && processed {
 			// 已处理过，直接 Ack
+			slog.Info("skipping already processed result",
+				slog.Uint64("ip_id", resp.GetIpId()),
+				slog.String("task_id", taskID))
 			_ = p.queue.AckResult(ctx, resp)
 			p.stats.mu.Lock()
 			p.stats.Skipped++
@@ -235,12 +248,24 @@ func (p *Pipeline) processOne(ctx context.Context) {
 	}
 
 	// 处理结果
+	slog.Info("processing result",
+		slog.Uint64("ip_id", resp.GetIpId()),
+		slog.String("task_id", taskID),
+		slog.Int("items", len(resp.GetItems())))
 	start := time.Now()
 	err = p.processResult(ctx, resp)
 	duration := time.Since(start)
 
 	if err != nil {
-		p.recordError(fmt.Sprintf("process result (ip=%d): %v", resp.GetIpId(), err))
+		errMsg := fmt.Sprintf("process result (ip=%d): %v", resp.GetIpId(), err)
+		p.recordError(errMsg)
+
+		// 输出 WARN 日志便于故障排查
+		slog.Warn("pipeline failed to process result",
+			slog.Uint64("ip_id", resp.GetIpId()),
+			slog.String("task_id", resp.GetTaskId()),
+			slog.String("error", err.Error()))
+
 		p.stats.mu.Lock()
 		p.stats.Failed++
 		p.stats.mu.Unlock()
@@ -249,6 +274,10 @@ func (p *Pipeline) processOne(ctx context.Context) {
 	}
 
 	// 处理成功，标记为已处理 + 从 processing queue 中移除
+	slog.Info("result processed successfully",
+		slog.Uint64("ip_id", resp.GetIpId()),
+		slog.String("task_id", taskID),
+		slog.Duration("duration", duration))
 	if taskID != "" {
 		_ = p.queue.MarkProcessed(ctx, taskID, processedTTL)
 	}

@@ -709,6 +709,80 @@ func (c *Client) IsProcessed(ctx context.Context, taskID string) (bool, error) {
 }
 
 // ============================================================================
+// 启动恢复 (Startup Recovery)
+// ============================================================================
+
+// RecoverOrphanedResults 恢复启动时残留在 processing 队列中的结果
+// 与 RescueStuckResults 不同，此方法:
+// 1. 不递增 RetryCount (不惩罚任务)
+// 2. 不移入死信队列
+// 3. 用于服务启动时的一次性恢复
+// 返回恢复的结果数量
+func (c *Client) RecoverOrphanedResults(ctx context.Context) (int, error) {
+	if c == nil || c.rdb == nil {
+		return 0, errors.New("redis client is not initialized")
+	}
+
+	recovered := 0
+
+	for {
+		// 使用 RPOPLPUSH 原子移动 (从 processing 尾部取，放入 results 头部)
+		result, err := c.rdb.RPopLPush(ctx, KeyResultProcessingQueue, KeyResultQueue).Result()
+		if errors.Is(err, redis.Nil) {
+			break // 队列已空
+		}
+		if err != nil {
+			return recovered, fmt.Errorf("rpoplpush: %w", err)
+		}
+
+		// 解析获取 task_id，清理 started hash
+		var resp pb.CrawlResponse
+		if err := protojson.Unmarshal([]byte(result), &resp); err == nil && resp.GetTaskId() != "" {
+			c.rdb.HDel(ctx, KeyResultStartedHash, resp.GetTaskId())
+		}
+
+		recovered++
+	}
+
+	return recovered, nil
+}
+
+// RecoverOrphanedTasks 恢复启动时残留在 processing 队列中的任务
+// 与 RescueStuckTasks 不同，此方法:
+// 1. 不递增 RetryCount (不惩罚任务)
+// 2. 不移入死信队列
+// 3. 用于服务启动时的一次性恢复
+// 返回恢复的任务数量
+func (c *Client) RecoverOrphanedTasks(ctx context.Context) (int, error) {
+	if c == nil || c.rdb == nil {
+		return 0, errors.New("redis client is not initialized")
+	}
+
+	recovered := 0
+
+	for {
+		// 使用 RPOPLPUSH 原子移动 (从 processing 尾部取，放入 tasks 头部)
+		result, err := c.rdb.RPopLPush(ctx, KeyTaskProcessingQueue, KeyTaskQueue).Result()
+		if errors.Is(err, redis.Nil) {
+			break // 队列已空
+		}
+		if err != nil {
+			return recovered, fmt.Errorf("rpoplpush: %w", err)
+		}
+
+		// 解析获取 task_id，清理 started hash
+		var req pb.CrawlRequest
+		if err := protojson.Unmarshal([]byte(result), &req); err == nil && req.GetTaskId() != "" {
+			c.rdb.HDel(ctx, KeyTaskStartedHash, req.GetTaskId())
+		}
+
+		recovered++
+	}
+
+	return recovered, nil
+}
+
+// ============================================================================
 // 队列统计
 // ============================================================================
 

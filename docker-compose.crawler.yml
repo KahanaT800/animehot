@@ -13,7 +13,9 @@ services:
       context: .
       dockerfile: build/Dockerfile.crawler
     container_name: animehot-crawler-local
-    restart: unless-stopped
+    restart: always
+    init: true  # 使用 tini 作为 PID 1，自动回收僵尸进程
+    stop_grace_period: 2m
     logging:
       driver: "json-file"
       options:

@@ -10,6 +10,7 @@ import (
 	"animetop/internal/analyzer"
 	"animetop/internal/config"
 	"animetop/internal/model"
+	"animetop/internal/pkg/metrics"
 	"animetop/internal/pkg/redisqueue"
 	"animetop/proto/pb"
 
@@ -69,6 +70,16 @@ func (s *IPScheduler) Start(ctx context.Context) error {
 	s.running = true
 	s.stopCh = make(chan struct{})
 	s.mu.Unlock()
+
+	// 启动时恢复残留在 processing 队列中的任务
+	// 这是为了处理服务重启后未 ACK 的任务
+	if recovered, err := s.queue.RecoverOrphanedTasks(ctx); err != nil {
+		s.logger.Warn("failed to recover orphaned tasks",
+			slog.String("error", err.Error()))
+	} else if recovered > 0 {
+		s.logger.Info("recovered orphaned tasks on startup",
+			slog.Int("count", recovered))
+	}
 
 	// 初始化调度时间 (从数据库恢复或新建)
 	if err := s.initScheduleTimes(ctx); err != nil {
@@ -477,8 +488,38 @@ func (s *IPScheduler) janitorLoop(ctx context.Context) {
 			}
 			_, _ = s.queue.RescueStuckTasks(ctx, timeout)
 			_, _ = s.queue.RescueStuckResults(ctx, timeout)
+
+			// 更新所有队列指标 (Phase 10.1)
+			s.updateQueueMetrics(ctx)
 		}
 	}
+}
+
+// updateQueueMetrics 更新队列监控指标
+func (s *IPScheduler) updateQueueMetrics(ctx context.Context) {
+	stats, err := s.queue.GetQueueStats(ctx)
+	if err != nil {
+		s.logger.Warn("failed to get queue stats for metrics",
+			slog.String("error", err.Error()))
+		return
+	}
+
+	// 更新各队列长度
+	metrics.QueueLength.WithLabelValues("tasks").Set(float64(stats.TaskQueueLen))
+	metrics.QueueLength.WithLabelValues("tasks_processing").Set(float64(stats.TaskProcessingLen))
+	metrics.QueueLength.WithLabelValues("tasks_dead").Set(float64(stats.TaskDeadLetterLen))
+	metrics.QueueLength.WithLabelValues("results").Set(float64(stats.ResultQueueLen))
+	metrics.QueueLength.WithLabelValues("results_processing").Set(float64(stats.ResultProcessingLen))
+	metrics.QueueLength.WithLabelValues("results_dead").Set(float64(stats.ResultDeadLetterLen))
+
+	// 获取调度 ZSET 长度
+	if scheduleLen, err := s.scheduleStore.Count(ctx); err == nil {
+		metrics.QueueLength.WithLabelValues("schedule").Set(float64(scheduleLen))
+	}
+
+	// 更新汇总指标
+	metrics.QueueLengthDLQ.Set(float64(stats.TaskDeadLetterLen + stats.ResultDeadLetterLen))
+	metrics.QueueLengthProcessing.Set(float64(stats.TaskProcessingLen + stats.ResultProcessingLen))
 }
 
 // JST 日本标准时间 (UTC+9)

@@ -8,7 +8,7 @@ import (
 
 // Redis List Queue 相关指标
 var (
-	// CrawlerQueueDepth Redis List 队列深度
+	// CrawlerQueueDepth Redis List 队列深度 (旧版，保留兼容)
 	CrawlerQueueDepth = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "crawler_queue_depth",
 		Help: "Current Redis List queue depth",
@@ -19,6 +19,28 @@ var (
 		Name: "crawler_task_throughput",
 		Help: "Crawler task throughput for Redis List",
 	}, []string{"direction", "status"}) // direction: in, out; status: pushed, popped
+)
+
+// Redis 队列监控指标 (Phase 10.1)
+var (
+	// QueueLength 所有队列的长度
+	// queue: tasks, tasks_processing, tasks_dead, results, results_processing, results_dead, schedule
+	QueueLength = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "animetop_queue_length",
+		Help: "Current length of Redis queues",
+	}, []string{"queue"})
+
+	// QueueLengthDLQ 死信队列总长度 (用于快速告警)
+	QueueLengthDLQ = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "animetop_queue_dlq_total",
+		Help: "Total items in all dead-letter queues",
+	})
+
+	// QueueLengthProcessing 处理中队列总长度
+	QueueLengthProcessing = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "animetop_queue_processing_total",
+		Help: "Total items in all processing queues",
+	})
 )
 
 // Worker Pool 相关指标
