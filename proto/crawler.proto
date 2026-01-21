@@ -19,20 +19,20 @@ enum ItemStatus {
 message CrawlRequest {
   uint64 ip_id = 1;              // IP 数据库 ID (关联 ip_metadata.id)
   string keyword = 2;            // 搜索关键词
+  // 字段 3 保留 (历史原因)
   string task_id = 4;            // 任务追踪 ID (UUID)
   int64 created_at = 5;          // 任务创建时间 (Unix 时间戳秒)
 
-  // 增量抓取相关 (v1 - 锚点模式，已废弃)
-  bool is_first_crawl = 6;       // [废弃] 是否首次抓取
-  repeated string anchor_window = 7;  // [废弃] 锚点窗口
-  int32 max_pages = 8;           // [废弃] 最大翻页数
+  // 字段 6-8 保留 (v1 锚点模式已移除)
+  reserved 6, 7, 8;
+  reserved "is_first_crawl", "anchor_window", "max_pages";
 
   // 重试相关
   int32 retry_count = 9;         // 已重试次数 (Janitor rescue 时递增)
 
-  // v2 - 固定页数模式 (分别抓取在售和已售)
-  int32 pages_on_sale = 10;      // 在售页数 (默认 3)
-  int32 pages_sold = 11;         // 已售页数 (默认 3)
+  // 固定页数模式 (分别抓取在售和已售)
+  int32 pages_on_sale = 10;      // 在售页数 (默认 5)
+  int32 pages_sold = 11;         // 已售页数 (默认 5)
 }
 
 // 商品信息
@@ -48,15 +48,17 @@ message Item {
 // 爬虫响应
 message CrawlResponse {
   uint64 ip_id = 1;              // IP 数据库 ID
+  // 字段 2 保留 (历史原因)
   repeated Item items = 3;       // 抓取到的商品列表 (从新到旧，在售+已售混合)
   int32 total_found = 4;         // 页面上显示的总数 (如有)
   string error_message = 5;      // 错误消息 (成功时为空)
   string task_id = 6;            // 任务追踪 ID
   int64 crawled_at = 7;          // 抓取完成时间 (Unix 时间戳秒)
 
-  // 增量抓取结果
-  bool is_first_crawl = 8;       // 是否首次抓取
-  string stopped_at_anchor = 9;  // 停止时遇到的锚点 ID (空表示未遇到锚点)
+  // 字段 8-9 保留 (v1 锚点模式已移除)
+  reserved 8, 9;
+  reserved "is_first_crawl", "stopped_at_anchor";
+
   int32 pages_crawled = 10;      // 实际翻页数
 
   // 重试相关

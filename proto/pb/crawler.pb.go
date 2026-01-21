@@ -71,20 +71,17 @@ func (ItemStatus) EnumDescriptor() ([]byte, []int) {
 // 爬虫请求
 // 每个 IP 生成一个请求，分别抓取在售和已售商品
 type CrawlRequest struct {
-	state     protoimpl.MessageState `protogen:"open.v1"`
-	IpId      uint64                 `protobuf:"varint,1,opt,name=ip_id,json=ipId,proto3" json:"ip_id,omitempty"`                // IP 数据库 ID (关联 ip_metadata.id)
-	Keyword   string                 `protobuf:"bytes,2,opt,name=keyword,proto3" json:"keyword,omitempty"`                       // 搜索关键词
-	TaskId    string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`           // 任务追踪 ID (UUID)
-	CreatedAt int64                  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // 任务创建时间 (Unix 时间戳秒)
-	// 增量抓取相关 (v1 - 锚点模式，已废弃)
-	IsFirstCrawl bool     `protobuf:"varint,6,opt,name=is_first_crawl,json=isFirstCrawl,proto3" json:"is_first_crawl,omitempty"` // [废弃] 是否首次抓取
-	AnchorWindow []string `protobuf:"bytes,7,rep,name=anchor_window,json=anchorWindow,proto3" json:"anchor_window,omitempty"`    // [废弃] 锚点窗口
-	MaxPages     int32    `protobuf:"varint,8,opt,name=max_pages,json=maxPages,proto3" json:"max_pages,omitempty"`               // [废弃] 最大翻页数
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	IpId    uint64                 `protobuf:"varint,1,opt,name=ip_id,json=ipId,proto3" json:"ip_id,omitempty"` // IP 数据库 ID (关联 ip_metadata.id)
+	Keyword string                 `protobuf:"bytes,2,opt,name=keyword,proto3" json:"keyword,omitempty"`        // 搜索关键词
+	// 字段 3 保留 (历史原因)
+	TaskId    string `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`           // 任务追踪 ID (UUID)
+	CreatedAt int64  `protobuf:"varint,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"` // 任务创建时间 (Unix 时间戳秒)
 	// 重试相关
 	RetryCount int32 `protobuf:"varint,9,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"` // 已重试次数 (Janitor rescue 时递增)
-	// v2 - 固定页数模式 (分别抓取在售和已售)
-	PagesOnSale   int32 `protobuf:"varint,10,opt,name=pages_on_sale,json=pagesOnSale,proto3" json:"pages_on_sale,omitempty"` // 在售页数 (默认 3)
-	PagesSold     int32 `protobuf:"varint,11,opt,name=pages_sold,json=pagesSold,proto3" json:"pages_sold,omitempty"`         // 已售页数 (默认 3)
+	// 固定页数模式 (分别抓取在售和已售)
+	PagesOnSale   int32 `protobuf:"varint,10,opt,name=pages_on_sale,json=pagesOnSale,proto3" json:"pages_on_sale,omitempty"` // 在售页数 (默认 5)
+	PagesSold     int32 `protobuf:"varint,11,opt,name=pages_sold,json=pagesSold,proto3" json:"pages_sold,omitempty"`         // 已售页数 (默认 5)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -143,27 +140,6 @@ func (x *CrawlRequest) GetTaskId() string {
 func (x *CrawlRequest) GetCreatedAt() int64 {
 	if x != nil {
 		return x.CreatedAt
-	}
-	return 0
-}
-
-func (x *CrawlRequest) GetIsFirstCrawl() bool {
-	if x != nil {
-		return x.IsFirstCrawl
-	}
-	return false
-}
-
-func (x *CrawlRequest) GetAnchorWindow() []string {
-	if x != nil {
-		return x.AnchorWindow
-	}
-	return nil
-}
-
-func (x *CrawlRequest) GetMaxPages() int32 {
-	if x != nil {
-		return x.MaxPages
 	}
 	return 0
 }
@@ -276,17 +252,15 @@ func (x *Item) GetStatus() ItemStatus {
 
 // 爬虫响应
 type CrawlResponse struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	IpId         uint64                 `protobuf:"varint,1,opt,name=ip_id,json=ipId,proto3" json:"ip_id,omitempty"`                        // IP 数据库 ID
-	Items        []*Item                `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`                                   // 抓取到的商品列表 (从新到旧，在售+已售混合)
-	TotalFound   int32                  `protobuf:"varint,4,opt,name=total_found,json=totalFound,proto3" json:"total_found,omitempty"`      // 页面上显示的总数 (如有)
-	ErrorMessage string                 `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"` // 错误消息 (成功时为空)
-	TaskId       string                 `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                   // 任务追踪 ID
-	CrawledAt    int64                  `protobuf:"varint,7,opt,name=crawled_at,json=crawledAt,proto3" json:"crawled_at,omitempty"`         // 抓取完成时间 (Unix 时间戳秒)
-	// 增量抓取结果
-	IsFirstCrawl    bool   `protobuf:"varint,8,opt,name=is_first_crawl,json=isFirstCrawl,proto3" json:"is_first_crawl,omitempty"`         // 是否首次抓取
-	StoppedAtAnchor string `protobuf:"bytes,9,opt,name=stopped_at_anchor,json=stoppedAtAnchor,proto3" json:"stopped_at_anchor,omitempty"` // 停止时遇到的锚点 ID (空表示未遇到锚点)
-	PagesCrawled    int32  `protobuf:"varint,10,opt,name=pages_crawled,json=pagesCrawled,proto3" json:"pages_crawled,omitempty"`          // 实际翻页数
+	state protoimpl.MessageState `protogen:"open.v1"`
+	IpId  uint64                 `protobuf:"varint,1,opt,name=ip_id,json=ipId,proto3" json:"ip_id,omitempty"` // IP 数据库 ID
+	// 字段 2 保留 (历史原因)
+	Items        []*Item `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`                                     // 抓取到的商品列表 (从新到旧，在售+已售混合)
+	TotalFound   int32   `protobuf:"varint,4,opt,name=total_found,json=totalFound,proto3" json:"total_found,omitempty"`        // 页面上显示的总数 (如有)
+	ErrorMessage string  `protobuf:"bytes,5,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`   // 错误消息 (成功时为空)
+	TaskId       string  `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`                     // 任务追踪 ID
+	CrawledAt    int64   `protobuf:"varint,7,opt,name=crawled_at,json=crawledAt,proto3" json:"crawled_at,omitempty"`           // 抓取完成时间 (Unix 时间戳秒)
+	PagesCrawled int32   `protobuf:"varint,10,opt,name=pages_crawled,json=pagesCrawled,proto3" json:"pages_crawled,omitempty"` // 实际翻页数
 	// 重试相关
 	RetryCount    int32 `protobuf:"varint,11,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"` // 已重试次数 (继承自 CrawlRequest)
 	unknownFields protoimpl.UnknownFields
@@ -365,20 +339,6 @@ func (x *CrawlResponse) GetCrawledAt() int64 {
 	return 0
 }
 
-func (x *CrawlResponse) GetIsFirstCrawl() bool {
-	if x != nil {
-		return x.IsFirstCrawl
-	}
-	return false
-}
-
-func (x *CrawlResponse) GetStoppedAtAnchor() string {
-	if x != nil {
-		return x.StoppedAtAnchor
-	}
-	return ""
-}
-
 func (x *CrawlResponse) GetPagesCrawled() int32 {
 	if x != nil {
 		return x.PagesCrawled
@@ -397,29 +357,26 @@ var File_proto_crawler_proto protoreflect.FileDescriptor
 
 const file_proto_crawler_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/crawler.proto\x12\acrawler\"\xc1\x02\n" +
+	"\x13proto/crawler.proto\x12\acrawler\"\x95\x02\n" +
 	"\fCrawlRequest\x12\x13\n" +
 	"\x05ip_id\x18\x01 \x01(\x04R\x04ipId\x12\x18\n" +
 	"\akeyword\x18\x02 \x01(\tR\akeyword\x12\x17\n" +
 	"\atask_id\x18\x04 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x05 \x01(\x03R\tcreatedAt\x12$\n" +
-	"\x0eis_first_crawl\x18\x06 \x01(\bR\fisFirstCrawl\x12#\n" +
-	"\ranchor_window\x18\a \x03(\tR\fanchorWindow\x12\x1b\n" +
-	"\tmax_pages\x18\b \x01(\x05R\bmaxPages\x12\x1f\n" +
+	"created_at\x18\x05 \x01(\x03R\tcreatedAt\x12\x1f\n" +
 	"\vretry_count\x18\t \x01(\x05R\n" +
 	"retryCount\x12\"\n" +
 	"\rpages_on_sale\x18\n" +
 	" \x01(\x05R\vpagesOnSale\x12\x1d\n" +
 	"\n" +
-	"pages_sold\x18\v \x01(\x05R\tpagesSold\"\xb4\x01\n" +
+	"pages_sold\x18\v \x01(\x05R\tpagesSoldJ\x04\b\x06\x10\aJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\x0eis_first_crawlR\ranchor_windowR\tmax_pages\"\xb4\x01\n" +
 	"\x04Item\x12\x1b\n" +
 	"\tsource_id\x18\x01 \x01(\tR\bsourceId\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x14\n" +
 	"\x05price\x18\x03 \x01(\x05R\x05price\x12\x1b\n" +
 	"\timage_url\x18\x04 \x01(\tR\bimageUrl\x12\x19\n" +
 	"\bitem_url\x18\x05 \x01(\tR\aitemUrl\x12+\n" +
-	"\x06status\x18\x06 \x01(\x0e2\x13.crawler.ItemStatusR\x06status\"\xdf\x02\n" +
+	"\x06status\x18\x06 \x01(\x0e2\x13.crawler.ItemStatusR\x06status\"\xbc\x02\n" +
 	"\rCrawlResponse\x12\x13\n" +
 	"\x05ip_id\x18\x01 \x01(\x04R\x04ipId\x12#\n" +
 	"\x05items\x18\x03 \x03(\v2\r.crawler.ItemR\x05items\x12\x1f\n" +
@@ -428,13 +385,12 @@ const file_proto_crawler_proto_rawDesc = "" +
 	"\rerror_message\x18\x05 \x01(\tR\ferrorMessage\x12\x17\n" +
 	"\atask_id\x18\x06 \x01(\tR\x06taskId\x12\x1d\n" +
 	"\n" +
-	"crawled_at\x18\a \x01(\x03R\tcrawledAt\x12$\n" +
-	"\x0eis_first_crawl\x18\b \x01(\bR\fisFirstCrawl\x12*\n" +
-	"\x11stopped_at_anchor\x18\t \x01(\tR\x0fstoppedAtAnchor\x12#\n" +
+	"crawled_at\x18\a \x01(\x03R\tcrawledAt\x12#\n" +
 	"\rpages_crawled\x18\n" +
 	" \x01(\x05R\fpagesCrawled\x12\x1f\n" +
 	"\vretry_count\x18\v \x01(\x05R\n" +
-	"retryCount*;\n" +
+	"retryCountJ\x04\b\b\x10\tJ\x04\b\t\x10\n" +
+	"R\x0eis_first_crawlR\x11stopped_at_anchor*;\n" +
 	"\n" +
 	"ItemStatus\x12\x17\n" +
 	"\x13ITEM_STATUS_ON_SALE\x10\x00\x12\x14\n" +

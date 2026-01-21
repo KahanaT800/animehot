@@ -168,6 +168,5 @@ func (s *Service) crawlWithFixedPages(ctx context.Context, req *pb.CrawlRequest)
 		Items:        allItems,
 		TotalFound:   int32(len(allItems)),
 		PagesCrawled: int32(totalPagesCrawled),
-		IsFirstCrawl: req.GetIsFirstCrawl(),
 	}, nil
 }
