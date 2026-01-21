@@ -239,7 +239,12 @@ func (p *Pipeline) processOne(ctx context.Context) {
 			slog.Info("skipping already processed result",
 				slog.Uint64("ip_id", resp.GetIpId()),
 				slog.String("task_id", taskID))
-			_ = p.queue.AckResult(ctx, resp)
+			if ackErr := p.queue.AckResult(ctx, resp); ackErr != nil {
+				slog.Warn("failed to ack skipped result",
+					slog.Uint64("ip_id", resp.GetIpId()),
+					slog.String("task_id", taskID),
+					slog.String("error", ackErr.Error()))
+			}
 			p.stats.mu.Lock()
 			p.stats.Skipped++
 			p.stats.mu.Unlock()
@@ -282,6 +287,10 @@ func (p *Pipeline) processOne(ctx context.Context) {
 		_ = p.queue.MarkProcessed(ctx, taskID, processedTTL)
 	}
 	if ackErr := p.queue.AckResult(ctx, resp); ackErr != nil {
+		slog.Warn("failed to ack processed result",
+			slog.Uint64("ip_id", resp.GetIpId()),
+			slog.String("task_id", taskID),
+			slog.String("error", ackErr.Error()))
 		p.recordError(fmt.Sprintf("ack result (ip=%d): %v", resp.GetIpId(), ackErr))
 	}
 
