@@ -146,8 +146,8 @@ sequenceDiagram
 
 ```bash
 # リポジトリをクローン
-git clone https://github.com/lyc0603/animetop.git
-cd animetop
+git clone https://github.com/KahanaT800/animehot
+cd animehot
 
 # 環境ファイルをコピー
 cp .env.example .env

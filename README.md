@@ -152,8 +152,8 @@ sequenceDiagram
 
 ```bash
 # 克隆仓库
-git clone https://github.com/lyc0603/animetop.git
-cd animetop
+git clone https://github.com/KahanaT800/animehot
+cd animehot
 
 # 复制环境配置
 cp .env.example .env

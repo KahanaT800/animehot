@@ -145,8 +145,8 @@ sequenceDiagram
 
 ```bash
 # Clone the repository
-git clone https://github.com/lyc0603/animetop.git
-cd animetop
+git clone https://github.com/KahanaT800/animehot
+cd animehot
 
 # Copy environment file
 cp .env.example .env
