@@ -1,0 +1,53 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "mercari-crawler"
+version = "0.1.0"
+description = "Python Mercari crawler node for anime merchandise market tracking"
+authors = ["AnimHot Team"]
+readme = "README.md"
+packages = [{include = "mercari_crawler", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+curl-cffi = "^0.6"
+playwright = "^1.40"
+playwright-stealth = "^1.0"
+tenacity = "^8.2"
+aiobreaker = "^1.2"
+redis = "^5.0"
+pydantic = "^2.0"
+pydantic-settings = "^2.0"
+structlog = "^24.0"
+prometheus-client = "^0.19"
+aiohttp = "^3.9"
+pyyaml = "^6.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+pytest-asyncio = "^0.21"
+black = "^24.0"
+ruff = "^0.1"
+mypy = "^1.8"
+
+[tool.poetry.scripts]
+mercari-crawler = "mercari_crawler.main:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "B", "C4"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

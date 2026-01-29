@@ -1,0 +1,27 @@
+# Mercari Crawler Configuration
+# Environment variables override these values (e.g., REDIS_ADDR)
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
+rate_limit:
+  rate: 5                    # Tokens per second (matches Go APP_RATE_LIMIT)
+  burst: 10                  # Bucket size (matches Go APP_RATE_BURST)
+  jitter_min: 1.0            # Minimum jitter in seconds
+  jitter_max: 5.0            # Maximum jitter in seconds
+
+token:
+  max_age_minutes: 30        # Token validity duration
+  proactive_refresh_ratio: 0.05  # Refresh when 5% of time remaining
+
+crawler:
+  max_concurrent_tasks: 3    # Maximum parallel crawl tasks
+  pop_timeout: 2.0           # Redis BRPOPLPUSH timeout in seconds
+
+metrics:
+  port: 2113                 # Prometheus metrics port
+
+health:
+  port: 8081                 # Health check HTTP port

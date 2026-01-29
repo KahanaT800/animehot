@@ -1,0 +1,63 @@
+# Development compose file - includes Redis
+# Usage: docker-compose -f docker-compose.dev.yml up
+
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: mercari-redis-dev
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - animetop-dev
+
+  py-crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mercari-py-crawler-dev
+    restart: unless-stopped
+    depends_on:
+      - redis
+    environment:
+      - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=
+      - APP_RATE_LIMIT=5
+      - APP_RATE_BURST=10
+      - TOKEN_MAX_AGE_MINUTES=30
+      - CRAWLER_MAX_CONCURRENT_TASKS=3
+      - HEALTH_PORT=8081
+      - METRICS_PORT=2113
+    ports:
+      - "8081:8081"   # Health check
+      - "2113:2113"   # Prometheus metrics
+    networks:
+      - animetop-dev
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis-data:
+
+networks:
+  animetop-dev:
+    driver: bridge
