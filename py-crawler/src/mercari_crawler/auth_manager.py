@@ -245,7 +245,18 @@ class AuthManager:
         if not self._browser_auth:
             raise RuntimeError("Failed to capture browser auth")
 
-        return self._browser_auth.headers.copy()
+        # 复用浏览器捕获的 headers，但替换 dpop 为新生成的
+        # 避免同一个 dpop 被多次使用（重放攻击检测）
+        headers = self._browser_auth.headers.copy()
+
+        # 确保有 DPoP 生成器
+        if self._dpop_generator is None:
+            self._dpop_generator = DPoPGenerator()
+
+        # 生成新的 dpop token
+        headers["dpop"] = self._dpop_generator.generate(method, url)
+
+        return headers
 
     async def _fallback_to_browser(self) -> None:
         """回退到浏览器模式"""
