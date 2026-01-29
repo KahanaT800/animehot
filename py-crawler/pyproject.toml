@@ -24,6 +24,7 @@ structlog = "^24.0"
 prometheus-client = "^0.19"
 aiohttp = "^3.9"
 pyyaml = "^6.0"
+cryptography = "^42.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4"
@@ -51,3 +52,5 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

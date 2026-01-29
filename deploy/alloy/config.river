@@ -15,14 +15,14 @@ prometheus.scrape "analyzer" {
   job_name = "animetop-analyzer"
 }
 
-// Scrape crawler metrics
-prometheus.scrape "crawler" {
+// Scrape Python crawler metrics
+prometheus.scrape "py_crawler" {
   targets = [{
-    __address__ = "crawler:2112",
+    __address__ = "py-crawler:2112",
   }]
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
   scrape_interval = "15s"
-  job_name = "animetop-crawler"
+  job_name = "animetop-py-crawler"
 }
 
 // Scrape Redis exporter

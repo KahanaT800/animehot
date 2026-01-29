@@ -7,8 +7,8 @@ redis:
   db: 0
 
 rate_limit:
-  rate: 5                    # Tokens per second (matches Go APP_RATE_LIMIT)
-  burst: 10                  # Bucket size (matches Go APP_RATE_BURST)
+  rate: 2                    # Tokens per second (must match Go APP_RATE_LIMIT)
+  burst: 5                   # Bucket size (must match Go APP_RATE_BURST)
   jitter_min: 1.0            # Minimum jitter in seconds
   jitter_max: 5.0            # Maximum jitter in seconds
 

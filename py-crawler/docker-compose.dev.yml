@@ -31,10 +31,10 @@ services:
       - TOKEN_MAX_AGE_MINUTES=30
       - CRAWLER_MAX_CONCURRENT_TASKS=3
       - HEALTH_PORT=8081
-      - METRICS_PORT=2113
+      - METRICS_PORT=2112
     ports:
       - "8081:8081"   # Health check
-      - "2113:2113"   # Prometheus metrics
+      - "2112:2112"   # Prometheus metrics
     networks:
       - animetop-dev
     deploy:

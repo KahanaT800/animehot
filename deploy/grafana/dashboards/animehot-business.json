@@ -113,8 +113,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "up{job=\"animetop-crawler\"}",
-          "legendFormat": "EC2 Crawler",
+          "expr": "up{job=\"animetop-py-crawler\"}",
+          "legendFormat": "EC2 Py-Crawler",
           "refId": "B"
         },
         {
@@ -188,7 +188,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_active_tasks{job=\"animetop-crawler\"}",
+          "expr": "mercari_crawler_tasks_in_progress{job=\"animetop-py-crawler\"}",
           "legendFormat": "EC2",
           "refId": "A"
         },
@@ -197,7 +197,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_active_tasks{job=\"animetop-crawler-local\"}",
+          "expr": "mercari_crawler_tasks_in_progress{job=\"animetop-crawler-local\"}",
           "legendFormat": "Local",
           "refId": "B"
         }
@@ -281,7 +281,7 @@
       },
       "id": 101,
       "panels": [],
-      "title": "EC2 Crawler",
+      "title": "EC2 Py-Crawler",
       "type": "row"
     },
     {
@@ -364,7 +364,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-py-crawler\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -373,7 +373,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-py-crawler\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
@@ -382,12 +382,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-py-crawler\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
       ],
-      "title": "EC2 Crawler Latency",
+      "title": "EC2 Py-Crawler Latency",
       "type": "timeseries"
     },
     {
@@ -470,7 +470,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_active_tasks{job=\"animetop-crawler\"}",
+          "expr": "mercari_crawler_tasks_in_progress{job=\"animetop-py-crawler\"}",
           "legendFormat": "Active Tasks",
           "refId": "A"
         },
@@ -479,8 +479,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_browser_active{job=\"animetop-crawler\"}",
-          "legendFormat": "Active Browser Pages",
+          "expr": "mercari_crawler_auth_mode{job=\"animetop-py-crawler\"}",
+          "legendFormat": "Auth Mode (0=HTTP, 1=Browser)",
           "refId": "B"
         },
         {
@@ -488,12 +488,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_browser_instances{job=\"animetop-crawler\"}",
-          "legendFormat": "Browser Instances",
+          "expr": "mercari_crawler_adaptive_delay_seconds{job=\"animetop-py-crawler\"}",
+          "legendFormat": "Adaptive Delay (s)",
           "refId": "C"
         }
       ],
-      "title": "EC2 Crawler Activity",
+      "title": "EC2 Py-Crawler Activity",
       "type": "timeseries"
     },
     {
@@ -506,7 +506,7 @@
       },
       "id": 102,
       "panels": [],
-      "title": "Local Crawler",
+      "title": "Local Py-Crawler",
       "type": "row"
     },
     {
@@ -589,7 +589,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
           "legendFormat": "p50",
           "refId": "A"
         },
@@ -598,7 +598,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
           "legendFormat": "p95",
           "refId": "B"
         },
@@ -607,12 +607,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.99, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
           "legendFormat": "p99",
           "refId": "C"
         }
       ],
-      "title": "Local Crawler Latency",
+      "title": "Local Py-Crawler Latency",
       "type": "timeseries"
     },
     {
@@ -695,7 +695,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_active_tasks{job=\"animetop-crawler-local\"}",
+          "expr": "mercari_crawler_tasks_in_progress{job=\"animetop-crawler-local\"}",
           "legendFormat": "Active Tasks",
           "refId": "A"
         },
@@ -704,8 +704,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_browser_active{job=\"animetop-crawler-local\"}",
-          "legendFormat": "Active Browser Pages",
+          "expr": "mercari_crawler_auth_mode{job=\"animetop-crawler-local\"}",
+          "legendFormat": "Auth Mode (0=HTTP, 1=Browser)",
           "refId": "B"
         },
         {
@@ -713,12 +713,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_browser_instances{job=\"animetop-crawler-local\"}",
-          "legendFormat": "Browser Instances",
+          "expr": "mercari_crawler_adaptive_delay_seconds{job=\"animetop-crawler-local\"}",
+          "legendFormat": "Adaptive Delay (s)",
           "refId": "C"
         }
       ],
-      "title": "Local Crawler Activity",
+      "title": "Local Py-Crawler Activity",
       "type": "timeseries"
     },
     {
@@ -845,7 +845,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-py-crawler\"}[5m])) by (le))",
           "legendFormat": "EC2 p50",
           "refId": "A"
         },
@@ -854,7 +854,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.50, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
           "legendFormat": "Local p50",
           "refId": "B"
         },
@@ -863,7 +863,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-py-crawler\"}[5m])) by (le))",
           "legendFormat": "EC2 p95",
           "refId": "C"
         },
@@ -872,7 +872,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, sum(rate(animetop_crawler_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(mercari_crawler_api_request_duration_seconds_bucket{job=\"animetop-crawler-local\"}[5m])) by (le))",
           "legendFormat": "Local p95",
           "refId": "D"
         }
@@ -991,7 +991,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(animetop_crawler_requests_total{status=\"success\", job=\"animetop-crawler\"}[5m])) * 60",
+          "expr": "sum(rate(mercari_crawler_api_requests_total{status=\"success\", job=\"animetop-py-crawler\"}[5m])) * 60",
           "legendFormat": "EC2 Success/min",
           "refId": "A"
         },
@@ -1000,7 +1000,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(animetop_crawler_requests_total{status=\"success\", job=\"animetop-crawler-local\"}[5m])) * 60",
+          "expr": "sum(rate(mercari_crawler_api_requests_total{status=\"success\", job=\"animetop-crawler-local\"}[5m])) * 60",
           "legendFormat": "Local Success/min",
           "refId": "B"
         },
@@ -1009,7 +1009,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(animetop_crawler_requests_total{status=\"failed\", job=\"animetop-crawler\"}[5m])) * 60",
+          "expr": "sum(rate(mercari_crawler_api_requests_total{status!=\"success\", job=\"animetop-py-crawler\"}[5m])) * 60",
           "legendFormat": "EC2 Failed/min",
           "refId": "C"
         },
@@ -1018,7 +1018,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(animetop_crawler_requests_total{status=\"failed\", job=\"animetop-crawler-local\"}[5m])) * 60",
+          "expr": "sum(rate(mercari_crawler_api_requests_total{status!=\"success\", job=\"animetop-crawler-local\"}[5m])) * 60",
           "legendFormat": "Local Failed/min",
           "refId": "D"
         }
@@ -1128,8 +1128,8 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "rate(crawler_task_throughput{direction=\"out\", status=\"popped\"}[5m]) * 60",
-          "legendFormat": "Popped/min",
+          "expr": "sum(rate(mercari_crawler_tasks_processed_total{status=\"success\"}[5m])) * 60",
+          "legendFormat": "Processed/min (success)",
           "refId": "B"
         },
         {
@@ -1140,6 +1140,15 @@
           "expr": "rate(crawler_task_throughput{direction=\"in\", status=\"skipped\"}[5m]) * 60",
           "legendFormat": "Skipped/min (dedup)",
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(mercari_crawler_tasks_processed_total{status=\"error\"}[5m])) * 60",
+          "legendFormat": "Failed/min (error)",
+          "refId": "D"
         }
       ],
       "title": "Task Throughput",
@@ -1729,7 +1738,7 @@
       },
       "id": 105,
       "panels": [],
-      "title": "Proxy & Totals",
+      "title": "Auth & Totals",
       "type": "row"
     },
     {
@@ -1748,12 +1757,12 @@
                 "0": {
                   "color": "green",
                   "index": 0,
-                  "text": "Direct"
+                  "text": "HTTP/DPoP"
                 },
                 "1": {
                   "color": "yellow",
                   "index": 1,
-                  "text": "Proxy"
+                  "text": "Browser"
                 }
               },
               "type": "value"
@@ -1776,7 +1785,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 39
+        "y": 51
       },
       "id": 9,
       "options": {
@@ -1798,7 +1807,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_proxy_mode{job=\"animetop-crawler\"}",
+          "expr": "mercari_crawler_auth_mode{job=\"animetop-py-crawler\"}",
           "legendFormat": "EC2",
           "refId": "A"
         },
@@ -1807,12 +1816,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_proxy_mode{job=\"animetop-crawler-local\"}",
+          "expr": "mercari_crawler_auth_mode{job=\"animetop-crawler-local\"}",
           "legendFormat": "Local",
           "refId": "B"
         }
       ],
-      "title": "Proxy Mode",
+      "title": "Auth Mode",
       "type": "stat"
     },
     {
@@ -1843,7 +1852,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 39
+        "y": 51
       },
       "id": 10,
       "options": {
@@ -1865,7 +1874,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_proxy_switch_to_proxy_total{job=\"animetop-crawler\"}",
+          "expr": "mercari_crawler_auth_mode_switches_total{job=\"animetop-py-crawler\"}",
           "legendFormat": "EC2",
           "refId": "A"
         },
@@ -1874,12 +1883,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "animetop_crawler_proxy_switch_to_proxy_total{job=\"animetop-crawler-local\"}",
+          "expr": "mercari_crawler_auth_mode_switches_total{job=\"animetop-crawler-local\"}",
           "legendFormat": "Local",
           "refId": "B"
         }
       ],
-      "title": "Total Proxy Switches",
+      "title": "Auth Mode Switches",
       "type": "stat"
     },
     {
@@ -1910,7 +1919,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 39
+        "y": 51
       },
       "id": 11,
       "options": {
@@ -1968,7 +1977,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 39
+        "y": 51
       },
       "id": 12,
       "options": {
@@ -1990,12 +1999,12 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "crawler_task_throughput{direction=\"out\", status=\"popped\"}",
-          "legendFormat": "Total Popped",
+          "expr": "sum(mercari_crawler_tasks_processed_total{status=\"success\"})",
+          "legendFormat": "Total Processed",
           "refId": "A"
         }
       ],
-      "title": "Total Tasks Popped",
+      "title": "Tasks Processed (Py)",
       "type": "stat"
     }
   ],

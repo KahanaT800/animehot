@@ -41,7 +41,7 @@ logger = structlog.get_logger(__name__)
 
 
 class HealthServer:
-    """HTTP server for health checks and Prometheus metrics."""
+    """HTTP server for health checks."""
 
     def __init__(self, engine: CrawlerEngine, port: int):
         """Initialize health server.
@@ -61,7 +61,6 @@ class HealthServer:
         self._app.router.add_get("/health", self._health_handler)
         self._app.router.add_get("/healthz", self._health_handler)
         self._app.router.add_get("/ready", self._ready_handler)
-        self._app.router.add_get("/metrics", self._metrics_handler)
 
         self._runner = web.AppRunner(self._app)
         await self._runner.setup()
@@ -90,11 +89,45 @@ class HealthServer:
             return web.Response(text="OK", status=200)
         return web.Response(text="Not Ready", status=503)
 
+
+class MetricsServer:
+    """HTTP server for Prometheus metrics on dedicated port."""
+
+    def __init__(self, port: int):
+        """Initialize metrics server.
+
+        Args:
+            port: HTTP port to listen on (default 2112 for Alloy compatibility)
+        """
+        self._port = port
+        self._app: Optional[web.Application] = None
+        self._runner: Optional[web.AppRunner] = None
+
+    async def start(self) -> None:
+        """Start the metrics server."""
+        self._app = web.Application()
+        self._app.router.add_get("/metrics", self._metrics_handler)
+
+        self._runner = web.AppRunner(self._app)
+        await self._runner.setup()
+
+        site = web.TCPSite(self._runner, "0.0.0.0", self._port)
+        await site.start()
+
+        logger.info("metrics_server_started", port=self._port)
+
+    async def stop(self) -> None:
+        """Stop the metrics server."""
+        if self._runner:
+            await self._runner.cleanup()
+            logger.info("metrics_server_stopped")
+
     async def _metrics_handler(self, request: web.Request) -> web.Response:
         """Handle /metrics endpoint for Prometheus."""
+        # Note: aiohttp doesn't allow charset in content_type, so use headers
         return web.Response(
             body=generate_latest(),
-            content_type=CONTENT_TYPE_LATEST,
+            headers={"Content-Type": CONTENT_TYPE_LATEST},
         )
 
 
@@ -151,15 +184,20 @@ async def run_crawler(settings: Settings) -> None:
         api_client=api_client,
     )
 
-    # Start health server
+    # Start health server (port 8081)
     health_server = HealthServer(engine, settings.health.port)
     await health_server.start()
+
+    # Start metrics server (port 2112 for Alloy/Grafana compatibility)
+    metrics_server = MetricsServer(settings.metrics.port)
+    await metrics_server.start()
 
     try:
         # Run engine
         await engine.start()
     finally:
         # Cleanup
+        await metrics_server.stop()
         await health_server.stop()
         await queue.close()
         await redis_client.close()

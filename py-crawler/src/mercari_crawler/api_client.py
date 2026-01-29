@@ -27,7 +27,7 @@ from .request_template import STATUS_ON_SALE, STATUS_SOLD_OUT, build_request_bod
 logger = structlog.get_logger(__name__)
 
 # Chrome versions for fingerprint randomization
-CHROME_VERSIONS = ["chrome120", "chrome119", "chrome124", "chrome123"]
+CHROME_VERSIONS = ["chrome120", "chrome119", "chrome116", "chrome110"]
 
 # Accept-Language variations
 ACCEPT_LANGUAGES = [
@@ -381,7 +381,8 @@ class MercariAPI:
 
     def get_breaker_state(self) -> str:
         """Get current circuit breaker state."""
-        return self._breaker.state.name
+        state = self._breaker.state
+        return state.__class__.__name__.replace("Circuit", "").replace("State", "").upper()
 
     def get_auth_mode(self) -> str:
         """Get current auth mode."""

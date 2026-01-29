@@ -46,6 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     # curl_cffi dependencies
     libcurl4-openssl-dev \
+    # curl for healthcheck
+    curl \
     # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,8 +66,8 @@ COPY configs/ ./configs/
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src
 
-# Expose ports
-EXPOSE 8081 2113
+# Expose ports (health: 8081, metrics: 2112)
+EXPOSE 8081 2112
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \

@@ -151,7 +151,8 @@ class RedisQueue:
         Args:
             response: CrawlResponse to push
         """
-        data = json.dumps(response.to_dict())
+        # Use separators without spaces to match Go protojson format
+        data = json.dumps(response.to_dict(), separators=(",", ":"))
         await self.redis.lpush(KEY_RESULT_QUEUE, data)
         logger.debug(
             "result_pushed",

@@ -1,14 +1,72 @@
 """Configuration management using Pydantic Settings.
 
-Three-layer configuration: YAML file -> environment variables -> defaults.
+Priority: environment variables > YAML file > defaults
+
+All settings automatically support environment variables:
+  REDIS_ADDR, REDIS_PASSWORD, REDIS_DB
+  APP_RATE_LIMIT, APP_RATE_BURST, APP_RATE_JITTER_MIN, APP_RATE_JITTER_MAX
+  TOKEN_MAX_AGE_MINUTES, TOKEN_PROACTIVE_REFRESH_RATIO
+  CRAWLER_MAX_CONCURRENT_TASKS, CRAWLER_POP_TIMEOUT
+  METRICS_PORT
+  HEALTH_PORT
 """
 
+import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Type, TypeVar
 
 import yaml
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+T = TypeVar("T", bound=BaseSettings)
+
+
+def _create_settings(
+    settings_cls: Type[T],
+    yaml_data: dict[str, Any],
+    env_prefix: str,
+    env_aliases: Optional[dict[str, str]] = None,
+) -> T:
+    """Create settings with correct priority: env vars > yaml > defaults.
+
+    Args:
+        settings_cls: The settings class to instantiate
+        yaml_data: Values from YAML config file
+        env_prefix: Environment variable prefix for this settings class
+        env_aliases: Optional mapping of field_name -> alternative env var name
+
+    Returns:
+        Settings instance with correct priority
+    """
+    # Start with YAML values as base
+    merged = dict(yaml_data)
+    env_aliases = env_aliases or {}
+
+    # Get field names from the settings class
+    for field_name, field_info in settings_cls.model_fields.items():
+        # Build env var name (e.g., REDIS_ADDR, METRICS_PORT)
+        env_name = f"{env_prefix}{field_name.upper()}"
+
+        # Check for alias in field definition (e.g., APP_RATE_LIMIT for rate field)
+        if field_info.alias:
+            env_name_alias = f"{env_prefix}{field_info.alias.upper()}"
+            if os.environ.get(env_name_alias):
+                env_name = env_name_alias
+
+        # Check for custom env aliases (e.g., REDIS_REMOTE_ADDR -> addr)
+        if field_name in env_aliases:
+            custom_alias = env_aliases[field_name]
+            if os.environ.get(custom_alias):
+                env_name = custom_alias
+
+        # Environment variable overrides YAML
+        env_value = os.environ.get(env_name)
+        if env_value is not None:
+            merged[field_name] = env_value
+
+    return settings_cls(**merged)
 
 
 class RedisSettings(BaseSettings):
@@ -33,10 +91,10 @@ class RedisSettings(BaseSettings):
 class RateLimitSettings(BaseSettings):
     """Rate limiting settings (must match Go APP_RATE_LIMIT/APP_RATE_BURST)."""
 
-    model_config = SettingsConfigDict(env_prefix="APP_RATE_")
+    model_config = SettingsConfigDict(env_prefix="APP_RATE_", populate_by_name=True)
 
-    rate: int = Field(default=5, alias="limit", description="Tokens per second")
-    burst: int = Field(default=10, description="Bucket size")
+    rate: int = Field(default=2, alias="limit", description="Tokens per second (must match Go)")
+    burst: int = Field(default=5, description="Bucket size (must match Go)")
     jitter_min: float = Field(default=1.0, description="Minimum jitter in seconds")
     jitter_max: float = Field(default=5.0, description="Maximum jitter in seconds")
 
@@ -66,7 +124,7 @@ class MetricsSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="METRICS_")
 
-    port: int = Field(default=2113, description="Prometheus metrics port")
+    port: int = Field(default=2112, description="Prometheus metrics port")
 
 
 class HealthSettings(BaseSettings):
@@ -117,21 +175,26 @@ class Settings(BaseSettings):
                         yaml_data = yaml.safe_load(f) or {}
                     break
 
-        # Build nested settings from YAML
-        redis_data = yaml_data.get("redis", {})
-        rate_limit_data = yaml_data.get("rate_limit", {})
-        token_data = yaml_data.get("token", {})
-        crawler_data = yaml_data.get("crawler", {})
-        metrics_data = yaml_data.get("metrics", {})
-        health_data = yaml_data.get("health", {})
+        # Extract nested config sections from YAML
+        redis_yaml = yaml_data.get("redis", {})
+        rate_limit_yaml = yaml_data.get("rate_limit", {})
+        token_yaml = yaml_data.get("token", {})
+        crawler_yaml = yaml_data.get("crawler", {})
+        metrics_yaml = yaml_data.get("metrics", {})
+        health_yaml = yaml_data.get("health", {})
 
+        # Create each settings object with correct priority
+        # Note: REDIS_REMOTE_ADDR is Go crawler's env var, we support it as alias
         return cls(
-            redis=RedisSettings(**redis_data),
-            rate_limit=RateLimitSettings(**rate_limit_data),
-            token=TokenSettings(**token_data),
-            crawler=CrawlerSettings(**crawler_data),
-            metrics=MetricsSettings(**metrics_data),
-            health=HealthSettings(**health_data),
+            redis=_create_settings(
+                RedisSettings, redis_yaml, "REDIS_",
+                env_aliases={"addr": "REDIS_REMOTE_ADDR"}
+            ),
+            rate_limit=_create_settings(RateLimitSettings, rate_limit_yaml, "APP_RATE_"),
+            token=_create_settings(TokenSettings, token_yaml, "TOKEN_"),
+            crawler=_create_settings(CrawlerSettings, crawler_yaml, "CRAWLER_"),
+            metrics=_create_settings(MetricsSettings, metrics_yaml, "METRICS_"),
+            health=_create_settings(HealthSettings, health_yaml, "HEALTH_"),
         )
 
 

@@ -55,11 +55,7 @@ health:
 
 # Get metrics
 metrics:
-	curl -s http://localhost:2113/metrics
-
-# Local test (standalone, no crawler needed)
-test-local:
-	PYTHONPATH=src poetry run python test_local.py
+	curl -s http://localhost:2112/metrics
 
 # Start local Redis for testing
 redis-start:

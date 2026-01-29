@@ -32,7 +32,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        service: [analyzer, crawler]
+        service: [analyzer, py-crawler]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,14 +70,14 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           ANALYZER_IMAGE: ${{ env.IMAGE_PREFIX }}/analyzer:${{ github.event.workflow_run.head_sha }}
-          CRAWLER_IMAGE: ${{ env.IMAGE_PREFIX }}/crawler:${{ github.event.workflow_run.head_sha }}
+          PY_CRAWLER_IMAGE: ${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ANALYZER_IMAGE,CRAWLER_IMAGE,GHCR_TOKEN,GHCR_USER
+          envs: ANALYZER_IMAGE,PY_CRAWLER_IMAGE,GHCR_TOKEN,GHCR_USER
           script_stop: true
           script: |
             set -e
@@ -85,7 +85,7 @@ jobs:
             echo "=========================================="
             echo "开始部署 Anime Hot"
             echo "ANALYZER: $ANALYZER_IMAGE"
-            echo "CRAWLER: $CRAWLER_IMAGE"
+            echo "PY_CRAWLER: $PY_CRAWLER_IMAGE"
             echo "=========================================="
 
             cd ~/animehot
@@ -102,18 +102,21 @@ jobs:
             # 3. 拉取新镜像
             echo "[3/5] 拉取镜像..."
             docker pull $ANALYZER_IMAGE
-            docker pull $CRAWLER_IMAGE
+            docker pull $PY_CRAWLER_IMAGE
 
             # 4. 更新并重启服务
             echo "[4/5] 重启服务..."
             export ANALYZER_IMAGE=$ANALYZER_IMAGE
-            export CRAWLER_IMAGE=$CRAWLER_IMAGE
+            export PY_CRAWLER_IMAGE=$PY_CRAWLER_IMAGE
 
             # 先停止 nginx（避免 DNS 缓存问题）
             docker compose -f docker-compose.prod.yml stop nginx || true
 
-            # 启动新的 analyzer 和 crawler
-            docker compose -f docker-compose.prod.yml up -d analyzer crawler
+            # 停止旧的 Go crawler (如果还在运行)
+            docker compose -f docker-compose.prod.yml stop crawler || true
+
+            # 启动 analyzer 和 py-crawler
+            docker compose -f docker-compose.prod.yml up -d analyzer py-crawler
 
             # 5. 健康检查 (轮询，最多等待 60 秒)
             echo "[5/5] 等待服务健康..."
@@ -128,6 +131,20 @@ jobs:
                 exit 1
               fi
               echo "等待中... ($i/12)"
+              sleep 5
+            done
+
+            # py-crawler 健康检查
+            for i in $(seq 1 12); do
+              if docker exec animehot-py-crawler curl -sf http://localhost:8081/health 2>/dev/null | grep -q '"healthy"'; then
+                echo "✅ Python Crawler 健康检查通过 (${i}次尝试)"
+                break
+              fi
+              if [ $i -eq 12 ]; then
+                echo "⚠️ Python Crawler 健康检查未通过，继续部署..."
+                docker compose -f docker-compose.prod.yml logs --tail=20 py-crawler
+              fi
+              echo "等待 py-crawler... ($i/12)"
               sleep 5
             done
 
@@ -156,7 +173,7 @@ jobs:
           echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| Analyzer | \`${{ env.IMAGE_PREFIX }}/analyzer:${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Crawler | \`${{ env.IMAGE_PREFIX }}/crawler:${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Python Crawler | \`${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "| 触发者 | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
