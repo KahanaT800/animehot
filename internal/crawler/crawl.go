@@ -190,6 +190,9 @@ func (s *Service) StartWorker(ctx context.Context) error {
 			// 只有任务真正完成时才调用 AckTask
 			// 超时的任务会留在 processing queue，由 Janitor 来处理
 			if taskCompleted {
+				s.logger.Info("attempting to ack task",
+					slog.String("task_id", taskID),
+					slog.Uint64("ip_id", t.GetIpId()))
 				ackCtx, ackCancel := context.WithTimeout(context.Background(), redisOperationTimeout)
 				defer ackCancel()
 				if ackErr := s.redisQueue.AckTask(ackCtx, t); ackErr != nil {
@@ -197,7 +200,9 @@ func (s *Service) StartWorker(ctx context.Context) error {
 						slog.String("task_id", taskID),
 						slog.String("error", ackErr.Error()))
 				} else {
-					s.logger.Debug("task acked", slog.String("task_id", taskID))
+					s.logger.Info("task acked successfully",
+						slog.String("task_id", taskID),
+						slog.Uint64("ip_id", t.GetIpId()))
 				}
 			} else {
 				s.logger.Warn("task not acked (timeout), will be rescued by janitor",

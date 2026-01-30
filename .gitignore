@@ -57,8 +57,26 @@ temp/
 .claude/
 CLAUDE.md
 
-# Python virtual environment
+# Python
 .venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+dist/
+build/*
+!build/Dockerfile*
+*.egg
+
+# Playwright
+playwright-report/
+test-results/
 
 # Generated nginx config
 deploy/nginx/conf.d/default.conf
@@ -75,3 +93,9 @@ web/static
 
 # Mercari HTML files
 mercari.html
+
+# API capture test results (may contain cookies/tokens)
+scripts/api_capture/
+**/captured_*.json
+**/cookies.json
+**/tokens.json

@@ -177,11 +177,13 @@ services:
     networks:
       - animehot-net
 
+  # Go Crawler (deprecated, will be replaced by py-crawler)
   crawler:
     image: ${CRAWLER_IMAGE:-ghcr.io/kahanat800/animehot/crawler:latest}
     container_name: animehot-crawler
-    restart: always
-    init: true  # 自动回收僵尸进程
+    profiles: ["deprecated"]  # 不再默认启动
+    restart: "no"
+    init: true
     stop_grace_period: 2m
     logging:
       driver: "json-file"
@@ -189,20 +191,13 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      # App
       APP_ENV: prod
       DEBUG: "false"
       TZ: Asia/Tokyo
-
-      # Redis
       REDIS_ADDR: "redis:6379"
       REDIS_PASSWORD: ""
-
-      # Rate Limit
       APP_RATE_LIMIT: ${APP_RATE_LIMIT:-2}
       APP_RATE_BURST: ${APP_RATE_BURST:-5}
-
-      # Browser
       CHROME_BIN: "/usr/bin/chromium-browser"
       BROWSER_BIN_PATH: "/usr/bin/chromium-browser"
       BROWSER_HEADLESS: "true"
@@ -211,13 +206,9 @@ services:
       BROWSER_PAGE_TIMEOUT: ${BROWSER_PAGE_TIMEOUT:-60s}
       BROWSER_TASK_TIMEOUT: ${BROWSER_TASK_TIMEOUT:-12m}
       BROWSER_DEBUG_SCREENSHOT: "false"
-
-      # Crawler
       MAX_TASKS: ${MAX_TASKS:-50}
       PROXY_AUTO_SWITCH: "false"
       HTTP_PROXY: ${HTTP_PROXY:-}
-
-      # Metrics
       APP_METRICS_ADDR: ":2112"
     depends_on:
       redis:
@@ -231,6 +222,57 @@ services:
       retries: 5
     tmpfs:
       - /tmp:mode=1777,exec
+    networks:
+      - animehot-net
+
+  # Python Crawler (主要爬虫服务)
+  py-crawler:
+    image: ${PY_CRAWLER_IMAGE:-ghcr.io/kahanat800/animehot/py-crawler:latest}
+    container_name: animehot-py-crawler
+    restart: always
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Redis (使用内部网络)
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: ""
+
+      # Rate Limit (与 Go 爬虫共享配置)
+      APP_RATE_LIMIT: ${APP_RATE_LIMIT:-2}
+      APP_RATE_BURST: ${APP_RATE_BURST:-5}
+
+      # Crawler settings
+      CRAWLER_MAX_CONCURRENT_TASKS: ${CRAWLER_MAX_CONCURRENT_TASKS:-3}
+
+      # Ports
+      HEALTH_PORT: "8081"
+      METRICS_PORT: "2112"
+
+      # Logging
+      LOG_LEVEL: ${APP_LOG_LEVEL:-info}
+      TZ: Asia/Tokyo
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "8081"
+      - "2112"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - animehot-net
 

@@ -4,17 +4,63 @@
 # 使用方法:
 #   1. 确保本地已加入 Tailscale 且能 ping 通 EC2
 #   2. 创建 .env.crawler 文件 (参考 .env.crawler.example)
-#   3. docker compose -f docker-compose.crawler.yml up -d
-#   4. 启用监控: docker compose -f docker-compose.crawler.yml --profile monitoring up -d
+#   3. docker compose -f docker-compose.crawler.yml up -d --build
+#   4. 启用监控: docker compose -f docker-compose.crawler.yml --profile monitoring up -d --build
 
 services:
+  # Python Crawler (主要)
+  py-crawler:
+    build:
+      context: .
+      dockerfile: build/Dockerfile.py-crawler
+    container_name: animehot-py-crawler-local
+    restart: always
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      # Redis 连接 (Tailscale 内网，兼容 Go 爬虫的 REDIS_REMOTE_ADDR)
+      REDIS_REMOTE_ADDR: ${REDIS_REMOTE_ADDR:-100.99.127.100:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+      # 限流 (与 Go 爬虫共享配置)
+      APP_RATE_LIMIT: ${APP_RATE_LIMIT:-2}
+      APP_RATE_BURST: ${APP_RATE_BURST:-5}
+
+      # 爬虫配置
+      CRAWLER_MAX_CONCURRENT_TASKS: ${CRAWLER_MAX_CONCURRENT_TASKS:-3}
+
+      # 端口
+      HEALTH_PORT: "8081"
+      METRICS_PORT: "2112"
+
+      # 日志
+      LOG_LEVEL: ${APP_LOG_LEVEL:-info}
+      TZ: Asia/Tokyo
+
+    # 使用 host 网络模式以访问 Tailscale
+    network_mode: host
+
+    # 内存限制
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # Go Crawler (已废弃，保留以便回滚)
   crawler:
     build:
       context: .
       dockerfile: build/Dockerfile.crawler
     container_name: animehot-crawler-local
+    profiles: ["go-crawler"]  # 需要显式启用: --profile go-crawler
     restart: always
-    init: true  # 使用 tini 作为 PID 1，自动回收僵尸进程
+    init: true
     stop_grace_period: 2m
     logging:
       driver: "json-file"
@@ -22,52 +68,30 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      # App
       APP_ENV: prod
       DEBUG: "false"
       TZ: Asia/Tokyo
-
-      # Redis 连接 (Tailscale 内网)
       REDIS_ADDR: ${REDIS_REMOTE_ADDR:-100.99.127.100:6379}
       REDIS_PASSWORD: ""
-
-      # 爬虫配置
       BROWSER_MAX_CONCURRENCY: ${BROWSER_MAX_CONCURRENCY:-2}
       BROWSER_MAX_FETCH_COUNT: ${BROWSER_MAX_FETCH_COUNT:-120}
       BROWSER_PAGE_TIMEOUT: ${BROWSER_PAGE_TIMEOUT:-60s}
       BROWSER_TASK_TIMEOUT: ${BROWSER_TASK_TIMEOUT:-12m}
       MAX_TASKS: ${MAX_TASKS:-50}
-
-      # 调度配置
       SCHEDULER_PAGES_ON_SALE: ${SCHEDULER_PAGES_ON_SALE:-5}
       SCHEDULER_PAGES_SOLD: ${SCHEDULER_PAGES_SOLD:-5}
-
-      # 限流
       APP_RATE_LIMIT: ${APP_RATE_LIMIT:-3}
       APP_RATE_BURST: ${APP_RATE_BURST:-5}
-
-      # 代理 (可选)
       HTTP_PROXY: ${HTTP_PROXY:-}
       PROXY_AUTO_SWITCH: "false"
-
-      # Metrics
       APP_METRICS_ADDR: ":2112"
-
-      # 日志
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-info}
-
-    # 使用 host 网络模式以访问 Tailscale
     network_mode: host
-
-    # Chrome 需要的权限
     cap_add:
       - SYS_ADMIN
     security_opt:
       - seccomp=unconfined
-
-    # 共享内存 (Chrome 需要)
     shm_size: '2gb'
-
     tmpfs:
       - /tmp:mode=1777,exec
 

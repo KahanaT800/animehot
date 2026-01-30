@@ -3,6 +3,7 @@
 **[English](README.en.md)** | **[日本語](README.ja.md)** | **[中文](README.md)**
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python)](https://python.org/)
 [![CI](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml)
 [![Deploy](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -62,14 +63,14 @@ graph TB
     subgraph EC2[AWS EC2 - メインノード]
         NGINX[Nginx :80/:443]
         ANALYZER[Analyzer :8080]
-        CRAWLER1[Crawler]
+        CRAWLER1[Py-Crawler]
         MYSQL[(MySQL)]
         REDIS[(Redis)]
         ALLOY1[Alloy]
     end
 
     subgraph LOCAL[ローカルマシン - クローラーノード]
-        CRAWLER2[Crawler]
+        CRAWLER2[Py-Crawler]
         ALLOY2[Alloy]
     end
 
@@ -109,7 +110,7 @@ sequenceDiagram
 
     loop ワーカーループ
         CRW->>RQ: タスクを取得 (BRPOP)
-        CRW->>CRW: ヘッドレスChrome起動
+        CRW->>CRW: HTTP認証リクエスト
         CRW->>CRW: on_sale 5ページをクロール
         CRW->>CRW: sold 5ページをクロール
         CRW->>RQ: 結果をプッシュ
@@ -127,11 +128,9 @@ sequenceDiagram
 
 ## 技術スタック
 
-- **言語**: Go 1.24+
-- **Webフレームワーク**: Gin
-- **ORM**: GORM
-- **ブラウザ自動化**: go-rod (ヘッドレスChrome)
-- **メッセージフォーマット**: Protocol Buffers
+- **バックエンド**: Go 1.24+ (Gin + GORM)
+- **クローラー**: Python 3.11+ (HTTP認証 + Playwrightフォールバック)
+- **メッセージフォーマット**: Protocol Buffers (protojson)
 - **データベース**: MySQL 8.0 + Redis 7.x
 - **モニタリング**: Prometheus + Grafana Cloud + Alloy
 

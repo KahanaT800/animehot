@@ -1,0 +1,3 @@
+[submodule "py-crawler"]
+	path = py-crawler
+	url = https://github.com/KahanaT800/py-crawler.git

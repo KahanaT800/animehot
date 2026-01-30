@@ -3,6 +3,7 @@
 **[English](README.en.md)** | **[日本語](README.ja.md)** | **[中文](README.md)**
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python)](https://python.org/)
 [![CI](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml)
 [![Deploy](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -68,14 +69,14 @@ graph TB
     subgraph EC2[AWS EC2 - 云端主节点]
         NGINX[Nginx :80/:443]
         ANALYZER[Analyzer :8080]
-        CRAWLER1[Crawler]
+        CRAWLER1[Py-Crawler]
         MYSQL[(MySQL)]
         REDIS[(Redis)]
         ALLOY1[Alloy]
     end
 
     subgraph LOCAL[本地电脑 - 爬虫分身]
-        CRAWLER2[Crawler]
+        CRAWLER2[Py-Crawler]
         ALLOY2[Alloy]
     end
 
@@ -115,7 +116,7 @@ sequenceDiagram
 
     loop 爬虫循环
         CRW->>RQ: 拉取任务 (BRPOP)
-        CRW->>CRW: 启动无头浏览器
+        CRW->>CRW: HTTP 认证请求
         CRW->>CRW: 爬取在售页面 x5
         CRW->>CRW: 爬取已售页面 x5
         CRW->>RQ: 推送结果
@@ -133,11 +134,9 @@ sequenceDiagram
 
 ## 技术栈
 
-- **语言**: Go 1.24+
-- **Web框架**: Gin
-- **ORM**: GORM
-- **浏览器自动化**: go-rod
-- **消息格式**: Protocol Buffers
+- **后端**: Go 1.24+ (Gin + GORM)
+- **爬虫**: Python 3.11+ (HTTP 认证 + Playwright 降级)
+- **消息格式**: Protocol Buffers (protojson)
 - **数据库**: MySQL 8.0 + Redis 7.x
 - **监控**: Prometheus + Grafana Cloud + Alloy
 
@@ -258,7 +257,7 @@ docker compose -f docker-compose.crawler.yml up -d
 docker compose -f docker-compose.crawler.yml --profile monitoring up -d
 
 # 6. 查看日志
-docker logs -f animehot-crawler-local
+docker logs -f animehot-py-crawler-local
 ```
 
 ### 环境变量 (.env.crawler)
@@ -320,8 +319,9 @@ docker compose -f docker-compose.prod.yml --profile monitoring up -d
 | 指标 | 说明 |
 |------|------|
 | `up{job="animetop-*"}` | 服务健康状态 |
-| `animetop_active_tasks` | 正在处理的任务数 |
-| `animetop_crawler_request_duration_seconds` | 页面抓取延迟 |
+| `mercari_crawler_tasks_in_progress` | 正在处理的任务数 |
+| `mercari_crawler_api_request_duration_seconds` | API 请求延迟 |
+| `mercari_crawler_auth_mode` | 认证模式 (0=HTTP, 1=Browser) |
 | `animetop_scheduler_tasks_pending_in_queue` | 队列深度 |
 
 ## API 接口
@@ -475,13 +475,14 @@ animetop/
 │   │   └── cache.go       # 缓存管理
 │   ├── api/               # HTTP 接口
 │   ├── config/            # 配置
-│   ├── crawler/           # 浏览器自动化 (go-rod)
+│   ├── crawler/           # Go 爬虫 (deprecated)
 │   ├── model/             # 数据库模型 (GORM)
 │   ├── pkg/               # 公共工具库
 │   │   ├── metrics/       # Prometheus 指标
 │   │   ├── ratelimit/     # 限流
 │   │   └── redisqueue/    # 可靠队列
 │   └── scheduler/         # IP 调度
+├── py-crawler/            # Python 爬虫 (私有子模块)
 ├── deploy/
 │   ├── nginx/             # Nginx 配置
 │   ├── certbot/           # SSL 初始化
@@ -540,10 +541,13 @@ animetop/
 redis-cli LLEN animetop:queue:tasks
 
 # 检查爬虫日志
-docker logs animehot-crawler-local --tail 100
+docker logs animehot-py-crawler-local --tail 100
 
-# 验证 Redis 连接 (本地爬虫)
-docker exec animehot-crawler-local redis-cli -h 100.99.127.100 PING
+# 检查爬虫健康状态
+curl localhost:8081/health
+
+# 检查认证模式
+curl localhost:2112/metrics | grep mercari_crawler_auth_mode
 ```
 
 ### Grafana 看不到指标

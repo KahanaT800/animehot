@@ -278,6 +278,8 @@ func (m *mockScheduler) ScheduleIP(ctx context.Context, ipID uint64, nextTime ti
 }
 
 func TestClosedLoopScheduling(t *testing.T) {
+	t.Skip("Skipping: requires MySQL for ip_stats_hourly JSON columns")
+
 	// 设置 miniredis
 	s, err := miniredis.Run()
 	if err != nil {

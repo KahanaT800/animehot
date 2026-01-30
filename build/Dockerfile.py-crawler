@@ -1,0 +1,83 @@
+# build/Dockerfile.py-crawler
+# Python Mercari Crawler - Production Image
+#
+# Build context: repository root
+# Usage: docker build -f build/Dockerfile.py-crawler -t py-crawler .
+
+# Stage 1: Build stage
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install poetry
+RUN pip install --no-cache-dir poetry==1.7.1
+
+# Copy dependency files (from py-crawler subdirectory)
+COPY py-crawler/pyproject.toml ./
+
+# Configure poetry to not create virtual env
+RUN poetry config virtualenvs.create false
+
+# Install dependencies (no dev dependencies)
+RUN poetry install --no-dev --no-interaction --no-ansi
+
+# Stage 2: Runtime stage
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install runtime dependencies for playwright and curl_cffi
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Playwright dependencies
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libpango-1.0-0 \
+    libcairo2 \
+    # curl_cffi dependencies
+    libcurl4-openssl-dev \
+    # curl for healthcheck
+    curl \
+    # Cleanup
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Install playwright browsers
+RUN playwright install chromium
+
+# Copy application code (from py-crawler subdirectory)
+COPY py-crawler/src/ ./src/
+COPY py-crawler/configs/ ./configs/
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app/src
+
+# Expose ports (health: 8081, metrics: 2112)
+EXPOSE 8081 2112
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:8081/health || exit 1
+
+# Run the crawler
+CMD ["python", "-m", "mercari_crawler.main"]

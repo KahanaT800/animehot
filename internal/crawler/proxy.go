@@ -354,6 +354,8 @@ func (s *Service) resetConsecutiveFailures() {
 }
 
 // getConsecutiveFailures 获取当前连续失败计数
+//
+//nolint:unused // Go crawler deprecated, kept for reference
 func (s *Service) getConsecutiveFailures() int64 {
 	if s.rdb == nil {
 		return 0

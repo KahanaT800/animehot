@@ -2,6 +2,7 @@
 **[English](README.en.md)** | **[日本語](README.ja.md)** | **[中文](README.md)**
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python)](https://python.org/)
 [![CI](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml)
 [![Deploy](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -61,14 +62,14 @@ graph TB
     subgraph EC2[AWS EC2 - Main Node]
         NGINX[Nginx :80/:443]
         ANALYZER[Analyzer :8080]
-        CRAWLER1[Crawler]
+        CRAWLER1[Py-Crawler]
         MYSQL[(MySQL)]
         REDIS[(Redis)]
         ALLOY1[Alloy]
     end
 
     subgraph LOCAL[Local Machine - Crawler Node]
-        CRAWLER2[Crawler]
+        CRAWLER2[Py-Crawler]
         ALLOY2[Alloy]
     end
 
@@ -108,7 +109,7 @@ sequenceDiagram
 
     loop Worker Loop
         CRW->>RQ: Pull task (BRPOP)
-        CRW->>CRW: Launch headless Chrome
+        CRW->>CRW: HTTP auth request
         CRW->>CRW: Crawl 5 pages on_sale
         CRW->>CRW: Crawl 5 pages sold
         CRW->>RQ: Push result
@@ -126,11 +127,9 @@ sequenceDiagram
 
 ## Tech Stack
 
-- **Language**: Go 1.24+
-- **Web Framework**: Gin
-- **ORM**: GORM
-- **Browser Automation**: go-rod (headless Chrome)
-- **Message Format**: Protocol Buffers
+- **Backend**: Go 1.24+ (Gin + GORM)
+- **Crawler**: Python 3.11+ (HTTP auth + Playwright fallback)
+- **Message Format**: Protocol Buffers (protojson)
 - **Database**: MySQL 8.0 + Redis 7.x
 - **Monitoring**: Prometheus + Grafana Cloud + Alloy
 
