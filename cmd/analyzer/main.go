@@ -106,6 +106,7 @@ func main() {
 			PagesOnSale:  cfg.Scheduler.PagesOnSale,
 			PagesSold:    cfg.Scheduler.PagesSold,
 		},
+		ScheduleSlot: cfg.Scheduler.ScheduleSlot, // 时间槽对齐
 	}
 	pipeline := analyzer.NewPipeline(db, rdb, queue, &cfg.Analyzer, pipelineCfg, ipScheduler)
 	slogger.Info("Pipeline initialized")

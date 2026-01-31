@@ -2,7 +2,13 @@
 # Anime Hot - CD Pipeline
 #
 # 触发条件: CI workflow 成功完成后自动触发
-# 流程: GitHub Actions 构建镜像 (并行) → 推送 GHCR → EC2 拉取部署
+# 流程:
+#   - Analyzer: GitHub Actions 构建镜像 → GHCR → EC2 docker-compose 部署
+#   - py-crawler: GitHub Actions 构建镜像 → GHCR → K8s 滚动更新
+#
+# 混合部署模式 (过渡阶段):
+#   - 主 EC2: Analyzer + Redis (docker-compose) + K3s Server
+#   - Spot 节点: py-crawler (K8s + KEDA)
 
 name: Deploy
 
@@ -33,6 +39,8 @@ jobs:
     strategy:
       matrix:
         service: [analyzer, py-crawler]
+    outputs:
+      image_tag: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -63,65 +71,59 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-  deploy:
-    name: Deploy to EC2
+  # ============================================================================
+  # Deploy Analyzer to EC2 (docker-compose)
+  # ============================================================================
+  deploy-analyzer:
+    name: Deploy Analyzer (EC2)
     runs-on: ubuntu-latest
     needs: [build]
     steps:
-      - name: Deploy to EC2
+      - name: Deploy Analyzer to EC2
         uses: appleboy/ssh-action@v1.0.3
         env:
           ANALYZER_IMAGE: ${{ env.IMAGE_PREFIX }}/analyzer:${{ github.event.workflow_run.head_sha }}
-          PY_CRAWLER_IMAGE: ${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ANALYZER_IMAGE,PY_CRAWLER_IMAGE,GHCR_TOKEN,GHCR_USER
+          envs: ANALYZER_IMAGE,GHCR_TOKEN,GHCR_USER
           script_stop: true
           script: |
             set -e
 
             echo "=========================================="
-            echo "开始部署 Anime Hot"
+            echo "部署 Analyzer (docker-compose)"
             echo "ANALYZER: $ANALYZER_IMAGE"
-            echo "PY_CRAWLER: $PY_CRAWLER_IMAGE"
             echo "=========================================="
 
             cd ~/animehot
 
-            # 1. 拉取最新代码 (获取 compose 文件更新)
-            echo "[1/5] 拉取最新代码..."
+            # 1. 拉取最新代码 (不拉取子模块，部署只需要 compose 配置)
+            echo "[1/4] 拉取最新代码..."
             git fetch origin main
             git reset --hard origin/main
+            # 注意：不执行 submodule update，因为部署只需要 Docker 镜像，不需要源码
 
             # 2. 登录 GHCR
-            echo "[2/5] 登录 GHCR..."
+            echo "[2/4] 登录 GHCR..."
             echo "$GHCR_TOKEN" | docker login ghcr.io -u $GHCR_USER --password-stdin
 
-            # 3. 拉取新镜像
-            echo "[3/5] 拉取镜像..."
+            # 3. 拉取并重启 Analyzer
+            echo "[3/4] 重启 Analyzer..."
             docker pull $ANALYZER_IMAGE
-            docker pull $PY_CRAWLER_IMAGE
-
-            # 4. 更新并重启服务
-            echo "[4/5] 重启服务..."
             export ANALYZER_IMAGE=$ANALYZER_IMAGE
-            export PY_CRAWLER_IMAGE=$PY_CRAWLER_IMAGE
 
-            # 先停止 nginx（避免 DNS 缓存问题）
+            # 停止 nginx（避免 DNS 缓存问题）
             docker compose -f docker-compose.prod.yml stop nginx || true
 
-            # 停止旧的 Go crawler (如果还在运行)
-            docker compose -f docker-compose.prod.yml stop crawler || true
+            # 只重启 analyzer（不再启动 py-crawler）
+            docker compose -f docker-compose.prod.yml up -d analyzer
 
-            # 启动 analyzer 和 py-crawler
-            docker compose -f docker-compose.prod.yml up -d analyzer py-crawler
-
-            # 5. 健康检查 (轮询，最多等待 60 秒)
-            echo "[5/5] 等待服务健康..."
+            # 4. 健康检查
+            echo "[4/4] 等待 Analyzer 健康..."
             for i in $(seq 1 12); do
               if docker exec animehot-analyzer wget -qO- http://127.0.0.1:8080/health 2>/dev/null | grep -q '"status":"ok"'; then
                 echo "✅ Analyzer 健康检查通过 (${i}次尝试)"
@@ -136,52 +138,177 @@ jobs:
               sleep 5
             done
 
-            # py-crawler 健康检查
-            for i in $(seq 1 12); do
-              if docker exec animehot-py-crawler curl -sf http://localhost:8081/health 2>/dev/null | grep -q '"healthy"'; then
-                echo "✅ Python Crawler 健康检查通过 (${i}次尝试)"
-                break
-              fi
-              if [ $i -eq 12 ]; then
-                echo "⚠️ Python Crawler 健康检查未通过，继续部署..."
-                docker compose -f docker-compose.prod.yml logs --tail=20 py-crawler
-              fi
-              echo "等待 py-crawler... ($i/12)"
-              sleep 5
-            done
-
-            # 重启 nginx（刷新 upstream DNS）
+            # 重启 nginx
             docker compose -f docker-compose.prod.yml up -d nginx
 
-            # 清理垃圾
+            # 清理旧镜像
             echo "清理旧资源..."
-            docker container prune -f || true
             docker image prune -af || true
-            docker builder prune -af || true
-            docker volume prune -f || true
 
             echo ""
             echo "=========================================="
-            echo "部署完成！"
+            echo "Analyzer 部署完成！"
             echo "=========================================="
-            docker compose -f docker-compose.prod.yml ps
 
-      - name: Deployment Summary
-        if: success()
+  # ============================================================================
+  # Deploy py-crawler to K8s (滚动更新)
+  # ============================================================================
+  deploy-py-crawler:
+    name: Deploy py-crawler (K8s)
+    runs-on: ubuntu-latest
+    needs: [build]
+    # 只有当 K3S_ENABLED secret 存在时才运行
+    if: ${{ vars.K3S_ENABLED == 'true' }}
+    steps:
+      - name: Update K8s Deployment
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          PY_CRAWLER_IMAGE: ${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: PY_CRAWLER_IMAGE
+          script_stop: true
+          script: |
+            set -e
+
+            echo "=========================================="
+            echo "更新 K8s py-crawler 镜像"
+            echo "IMAGE: $PY_CRAWLER_IMAGE"
+            echo "=========================================="
+
+            # K3s kubectl 需要 sudo
+            KUBECTL="sudo kubectl"
+
+            # 检查 kubectl 是否可用
+            if ! command -v kubectl &> /dev/null; then
+              echo "❌ kubectl 未安装，跳过 K8s 部署"
+              exit 0
+            fi
+
+            # 检查 K3s 是否运行
+            if ! $KUBECTL cluster-info &> /dev/null; then
+              echo "❌ K3s 集群不可用，跳过 K8s 部署"
+              exit 0
+            fi
+
+            # 更新镜像
+            echo "更新 Deployment 镜像..."
+            $KUBECTL set image deployment/py-crawler \
+              py-crawler=$PY_CRAWLER_IMAGE \
+              -n animehot
+
+            # 检查当前副本数 (KEDA 可能将其缩容到 0)
+            REPLICAS=$($KUBECTL get deployment py-crawler -n animehot -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+            echo "当前副本数: $REPLICAS"
+
+            if [ "$REPLICAS" -eq 0 ]; then
+              echo "ℹ️ Deployment replicas=0 (KEDA 已缩容), 跳过 rollout 等待"
+              echo "   下次 KEDA 扩容时将自动使用新镜像"
+            else
+              # 等待滚动更新完成
+              echo "等待滚动更新..."
+              $KUBECTL rollout status deployment/py-crawler \
+                -n animehot \
+                --timeout=300s || {
+                  echo "⚠️ 滚动更新超时，检查 Pod 状态..."
+                  $KUBECTL get pods -n animehot -l app=py-crawler
+                  $KUBECTL describe deployment py-crawler -n animehot | tail -20
+                }
+            fi
+
+            # 显示当前状态
+            echo ""
+            echo "=========================================="
+            echo "K8s py-crawler 部署状态"
+            echo "=========================================="
+            $KUBECTL get pods -n animehot -l app=py-crawler
+
+  # ============================================================================
+  # Fallback: Deploy py-crawler to EC2 (docker-compose)
+  # 当 K3S_ENABLED != true 时使用此方式
+  # ============================================================================
+  deploy-py-crawler-compose:
+    name: Deploy py-crawler (docker-compose)
+    runs-on: ubuntu-latest
+    needs: [build]
+    # 只有当 K3S_ENABLED 不为 true 时才运行
+    if: ${{ vars.K3S_ENABLED != 'true' }}
+    steps:
+      - name: Deploy py-crawler to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          PY_CRAWLER_IMAGE: ${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: PY_CRAWLER_IMAGE,GHCR_TOKEN,GHCR_USER
+          script_stop: true
+          script: |
+            set -e
+
+            echo "=========================================="
+            echo "部署 py-crawler (docker-compose 模式)"
+            echo "IMAGE: $PY_CRAWLER_IMAGE"
+            echo "=========================================="
+
+            cd ~/animehot
+
+            # 登录 GHCR
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u $GHCR_USER --password-stdin
+
+            # 拉取并重启 py-crawler
+            docker pull $PY_CRAWLER_IMAGE
+            export PY_CRAWLER_IMAGE=$PY_CRAWLER_IMAGE
+            docker compose -f docker-compose.prod.yml up -d py-crawler
+
+            # 健康检查
+            echo "等待 py-crawler 健康..."
+            for i in $(seq 1 12); do
+              if docker exec animehot-py-crawler curl -sf http://localhost:8081/health 2>/dev/null | grep -q '"healthy"'; then
+                echo "✅ py-crawler 健康检查通过"
+                break
+              fi
+              if [ $i -eq 12 ]; then
+                echo "⚠️ py-crawler 健康检查超时"
+                docker compose -f docker-compose.prod.yml logs --tail=20 py-crawler
+              fi
+              sleep 5
+            done
+
+            echo "=========================================="
+            echo "py-crawler (docker-compose) 部署完成！"
+            echo "=========================================="
+
+  # ============================================================================
+  # Summary
+  # ============================================================================
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-analyzer, deploy-py-crawler, deploy-py-crawler-compose]
+    if: always()
+    steps:
+      - name: Generate Summary
         run: |
-          echo "## 🚀 部署成功" >> $GITHUB_STEP_SUMMARY
+          echo "## 🚀 部署结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| 服务 | 部署方式 | 状态 |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|----------|------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Analyzer | docker-compose | ${{ needs.deploy-analyzer.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ vars.K3S_ENABLED }}" = "true" ]; then
+            echo "| py-crawler | K8s | ${{ needs.deploy-py-crawler.result == 'success' && '✅' || (needs.deploy-py-crawler.result == 'skipped' && '⏭️' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| py-crawler | docker-compose | ${{ needs.deploy-py-crawler-compose.result == 'success' && '✅' || (needs.deploy-py-crawler-compose.result == 'skipped' && '⏭️' || '❌') }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| 项目 | 值 |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-----|" >> $GITHUB_STEP_SUMMARY
           echo "| Commit | \`${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Analyzer | \`${{ env.IMAGE_PREFIX }}/analyzer:${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| Python Crawler | \`${{ env.IMAGE_PREFIX }}/py-crawler:${{ github.event.workflow_run.head_sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| 触发者 | @${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "## ❌ 部署失败" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "请检查 EC2 日志" >> $GITHUB_STEP_SUMMARY
-          echo "::error::部署失败，请检查 EC2 日志"
+          echo "| K3S 模式 | ${{ vars.K3S_ENABLED == 'true' && '✅ 启用' || '❌ 未启用' }} |" >> $GITHUB_STEP_SUMMARY

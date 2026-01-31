@@ -1,0 +1,138 @@
+# Alloy ConfigMap - Grafana Alloy 配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: animehot
+data:
+  config.river: |
+    // ============================================
+    // Kubernetes Service Discovery
+    // ============================================
+    discovery.kubernetes "pods" {
+      role = "pod"
+      namespaces {
+        names = ["animehot", "kube-system"]
+      }
+    }
+
+    // Relabel to extract pod annotations
+    discovery.relabel "pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      // Keep only pods with prometheus.io/scrape=true
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        regex         = "true"
+        action        = "keep"
+      }
+
+      // Use custom metrics port if specified
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        target_label  = "__address__"
+        regex         = "(.+)"
+        replacement   = "${1}"
+        action        = "replace"
+      }
+
+      // Use custom metrics path if specified
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+        action        = "replace"
+      }
+
+      // Add pod labels
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "node"
+      }
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app"]
+        target_label  = "app"
+      }
+    }
+
+    // ============================================
+    // Prometheus Scrape
+    // ============================================
+    prometheus.scrape "pods" {
+      targets    = discovery.relabel.pods.output
+      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+
+      scrape_interval = "15s"
+      scrape_timeout  = "10s"
+    }
+
+    // ============================================
+    // Prometheus Remote Write
+    // ============================================
+    prometheus.remote_write "grafana_cloud" {
+      endpoint {
+        url = env("GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL")
+
+        basic_auth {
+          username = env("GRAFANA_CLOUD_PROM_USERNAME")
+          password = env("GRAFANA_CLOUD_PROM_API_KEY")
+        }
+
+        queue_config {
+          max_samples_per_send = 1000
+          batch_send_deadline  = "5s"
+          min_backoff          = "30ms"
+          max_backoff          = "5s"
+        }
+      }
+
+      external_labels = {
+        cluster = "animehot-k3s",
+        env     = "production",
+      }
+    }
+
+    // ============================================
+    // Loki Log Collection
+    // ============================================
+    loki.source.kubernetes "pods" {
+      targets    = discovery.kubernetes.pods.targets
+      forward_to = [loki.process.pods.receiver]
+    }
+
+    loki.process "pods" {
+      forward_to = [loki.write.grafana_cloud.receiver]
+
+      // Extract labels from pod metadata
+      stage.labels {
+        values = {
+          namespace = "",
+          pod       = "",
+          container = "",
+        }
+      }
+    }
+
+    loki.write "grafana_cloud" {
+      endpoint {
+        url = env("GRAFANA_CLOUD_LOKI_URL")
+
+        basic_auth {
+          username = env("GRAFANA_CLOUD_LOKI_USERNAME")
+          password = env("GRAFANA_CLOUD_LOKI_API_KEY")
+        }
+      }
+
+      external_labels = {
+        cluster = "animehot-k3s",
+        env     = "production",
+      }
+    }

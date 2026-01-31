@@ -1,0 +1,138 @@
+# ServiceAccount for py-crawler
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: py-crawler
+  namespace: animehot
+
+---
+# Service (for metrics scraping)
+apiVersion: v1
+kind: Service
+metadata:
+  name: py-crawler
+  namespace: animehot
+  labels:
+    app: py-crawler
+spec:
+  ports:
+  - port: 2112
+    targetPort: 2112
+    name: metrics
+  - port: 8081
+    targetPort: 8081
+    name: health
+  selector:
+    app: py-crawler
+  clusterIP: None  # Headless service for pod discovery
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: py-crawler
+  namespace: animehot
+  labels:
+    app: py-crawler
+spec:
+  replicas: 0  # KEDA 控制副本数
+  selector:
+    matchLabels:
+      app: py-crawler
+  template:
+    metadata:
+      labels:
+        app: py-crawler
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "2112"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: py-crawler
+      terminationGracePeriodSeconds: 60
+      # imagePullSecrets 不需要，镜像是公开的
+
+      # 调度到 Spot 节点
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node-role
+                operator: In
+                values: ["spot"]
+        # 避免同一节点运行多个 py-crawler
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: py-crawler
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: py-crawler
+        image: ghcr.io/kahanat800/animehot/py-crawler:latest
+        ports:
+        - containerPort: 2112
+          name: metrics
+        - containerPort: 8081
+          name: health
+        env:
+        - name: TZ
+          value: "Asia/Tokyo"
+        # Redis 配置 (通过 Tailscale 连接主节点 Redis)
+        - name: REDIS_ADDR
+          value: "100.99.127.100:6379"
+        # Rate limiting
+        - name: APP_RATE_LIMIT
+          value: "3"
+        - name: APP_RATE_BURST
+          value: "5"
+        # Node info (用于 node_killer)
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        # 启用 K3s 模式 (启用 ban 检测)
+        - name: K3S_ENABLED
+          value: "true"
+        # Grafana Cloud (可选)
+        - name: GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: prom-remote-write-url
+              optional: true
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+        # preStop hook - 等待 SIGTERM 传播
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 5"]

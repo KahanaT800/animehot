@@ -1,0 +1,56 @@
+# KEDA ScaledObject - 监控 Redis 队列深度自动伸缩 py-crawler
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: py-crawler-scaler
+  namespace: animehot
+spec:
+  scaleTargetRef:
+    name: py-crawler
+    kind: Deployment
+
+  # 伸缩配置
+  pollingInterval: 15           # 每 15 秒检查队列
+  cooldownPeriod: 120           # 缩容冷却 2 分钟
+  minReplicaCount: 0            # 最小 0 个 Pod (无任务时完全缩容)
+  maxReplicaCount: 5            # 最大 5 个 Pod
+
+  # HPA 高级配置
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 0    # 无需额外稳定窗口 (KEDA cooldown 已有 2 分钟)
+          policies:
+          - type: Pods
+            value: 1                       # 每次最多缩 1 个 Pod
+            periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0    # 扩容无需等待
+          policies:
+          - type: Pods
+            value: 2                       # 每次最多扩 2 个 Pod
+            periodSeconds: 15
+
+  # 触发器 - 监控两个队列 (KEDA 取 max，任一队列有任务就保持 pod)
+  triggers:
+  # 1. 主任务队列
+  - type: redis
+    metadata:
+      address: 100.99.127.100:6379
+      listName: animetop:queue:tasks
+      listLength: "50"              # 每 50 个任务对应 1 个 Pod
+      activationListLength: "0"     # >0 个任务就启动 (0 任务时缩容到 0)
+      databaseIndex: "0"
+    # Redis 无密码，不需要 authenticationRef
+
+  # 2. 处理中队列 (仅用于防止缩容到 0，不影响扩容数量)
+  #    activationListLength: "1" - 有任务就激活 (不缩到 0)
+  #    listLength: 极大值 - 不影响 replicas 计算 (最多贡献 1)
+  - type: redis
+    metadata:
+      address: 100.99.127.100:6379
+      listName: animetop:queue:tasks:processing
+      listLength: "999999"          # 极大值，不影响扩容数量
+      activationListLength: "0"     # >0 个任务就保持激活 (防止缩到 0)
+      databaseIndex: "0"

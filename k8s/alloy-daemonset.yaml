@@ -1,0 +1,138 @@
+# Alloy DaemonSet - 在所有节点上运行
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: animehot
+  labels:
+    app: alloy
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      # 在所有节点上运行 (包括 master 和 spot)
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: alloy
+        image: grafana/alloy:v1.0.0
+        args:
+        - run
+        - /etc/alloy/config.river
+        - --storage.path=/var/lib/alloy/data
+        - --server.http.listen-addr=0.0.0.0:12345
+        ports:
+        - containerPort: 12345
+          name: http-metrics
+        env:
+        # Grafana Cloud 凭证
+        - name: GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: prom-remote-write-url
+        - name: GRAFANA_CLOUD_PROM_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: prom-username
+        - name: GRAFANA_CLOUD_PROM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: prom-api-key
+        - name: GRAFANA_CLOUD_LOKI_URL
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: loki-url
+        - name: GRAFANA_CLOUD_LOKI_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: loki-username
+        - name: GRAFANA_CLOUD_LOKI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud
+              key: loki-api-key
+        # Node info
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+        - name: data
+          mountPath: /var/lib/alloy/data
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: dockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-config
+      - name: data
+        emptyDir: {}
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: dockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+
+---
+# ServiceAccount for Alloy
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: animehot
+
+---
+# ClusterRole for reading pod info
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  verbs: ["get"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+- kind: ServiceAccount
+  name: alloy
+  namespace: animehot

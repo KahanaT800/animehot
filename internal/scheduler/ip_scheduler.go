@@ -86,6 +86,10 @@ func (s *IPScheduler) Start(ctx context.Context) error {
 		return fmt.Errorf("init schedule times: %w", err)
 	}
 
+	// 启动后立即检查过期任务 (不等待下一个调度周期)
+	s.logger.Info("checking for overdue tasks on startup")
+	s.checkAndSchedule(ctx)
+
 	// 启动调度循环
 	s.wg.Add(1)
 	go s.scheduleLoop(ctx)

@@ -1,0 +1,354 @@
+# =============================================================================
+# Spot ASG Scaler - 替代 Cluster Autoscaler
+# K3s 不兼容 Cluster Autoscaler，使用 CronJob 轮询方式
+# =============================================================================
+#
+# 前置条件：在 kube-system 命名空间创建 Secrets
+#
+# 1. AWS 凭证 (必需)
+# kubectl create secret generic aws-credentials \
+#   --from-literal=AWS_ACCESS_KEY_ID=xxx \
+#   --from-literal=AWS_SECRET_ACCESS_KEY=xxx \
+#   -n kube-system
+#
+# 2. Tailscale API Key (可选，用于清理 offline 节点)
+#    在 https://login.tailscale.com/admin/settings/keys 创建 API key
+#    权限: Devices - Read, Write
+# kubectl create secret generic tailscale-api \
+#   --from-literal=api-key=tskey-api-xxx \
+#   -n kube-system
+#
+# =============================================================================
+
+# RBAC
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spot-asg-scaler
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: spot-asg-scaler
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: spot-asg-scaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: spot-asg-scaler
+subjects:
+- kind: ServiceAccount
+  name: spot-asg-scaler
+  namespace: kube-system
+
+---
+# ConfigMap with scaling script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: spot-asg-scaler-script
+  namespace: kube-system
+data:
+  scale.sh: |
+    #!/bin/bash
+    set -e
+
+    ASG_NAME="py-crawler-spot-asg"
+    AWS_REGION="ap-northeast-1"
+    REDIS_HOST="100.99.127.100"
+    REDIS_DEATHS_KEY="animetop:crawler:deaths"
+
+    echo "=== Spot ASG Scaler $(date) ==="
+
+    # =========================================================
+    # 1. 收集状态
+    # =========================================================
+
+    # KEDA 控制的 deployment replicas
+    KEDA_REPLICAS=$(kubectl get deployment py-crawler -n animehot -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+    KEDA_REPLICAS=${KEDA_REPLICAS:-0}
+
+    # Pending pods (需要节点来调度)
+    PENDING_PODS=$(kubectl get pods -n animehot -l app=py-crawler --field-selector=status.phase=Pending --no-headers 2>/dev/null | wc -l)
+
+    # ASG 状态
+    ASG_INFO=$(aws autoscaling describe-auto-scaling-groups \
+      --auto-scaling-group-names "$ASG_NAME" \
+      --region "$AWS_REGION" \
+      --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,InService:length(Instances[?LifecycleState==`InService`])}' \
+      --output json 2>/dev/null)
+    ASG_DESIRED=$(echo "$ASG_INFO" | jq -r '.Desired // 0')
+    ASG_INSERVICE=$(echo "$ASG_INFO" | jq -r '.InService // 0')
+
+    # K8s 中的 spot 节点数
+    K8S_SPOT_NODES=$(kubectl get nodes -l node-role=spot --no-headers 2>/dev/null | wc -l)
+
+    echo "KEDA replicas: $KEDA_REPLICAS"
+    echo "Pending pods: $PENDING_PODS"
+    echo "ASG: desired=$ASG_DESIRED, inService=$ASG_INSERVICE"
+    echo "K8s spot nodes: $K8S_SPOT_NODES"
+
+    # =========================================================
+    # 2. 扩缩容决策
+    # =========================================================
+    #
+    # 场景A - 扩容: 有 Pending pods 且 ASG desired < KEDA replicas
+    #   → desired = KEDA_REPLICAS (一次性扩到目标)
+    #   注意: 不用 K8s 节点数，因为节点加入有 60-90s 延迟
+    #
+    # 场景A2 - 等待中: Pending pods 但 ASG desired >= KEDA replicas
+    #   → 不操作，等待节点加入 K8s
+    #
+    # 场景B - 同步缩容 (Ban自杀后): desired > inService 且无 Pending
+    #   → desired = inService (同步到实际值)
+    #
+    # 场景C - 主动缩容: KEDA replicas < inService 且无 Pending
+    #   → desired = KEDA_REPLICAS (一次性缩容到目标)
+    #
+    # 场景D - 完全缩容: KEDA replicas=0 且 inService=0 且 desired>0
+    #   → desired = 0 (清理状态)
+    #
+    # 场景E - 清理残留节点: K8s 有 NotReady 的 spot 节点但 ASG 无对应实例
+    #   → 从 K8s 删除这些节点
+    # =========================================================
+
+    # 场景A: 扩容 - 有 Pending pods 且 ASG desired < KEDA 需要的数量
+    # 关键：不看 K8s 节点数，因为节点加入有延迟 (60-90s)
+    # 只看 ASG desired 是否足够满足 KEDA 需求
+    if [ "$PENDING_PODS" -gt 0 ] && [ "$ASG_DESIRED" -lt "$KEDA_REPLICAS" ]; then
+      NEW_DESIRED=$KEDA_REPLICAS
+      echo "⬆️ Scale UP: Pending pods detected, need more capacity"
+      echo "   ASG desired ($ASG_DESIRED) < KEDA replicas ($KEDA_REPLICAS), scaling to $NEW_DESIRED"
+      aws autoscaling set-desired-capacity \
+        --auto-scaling-group-name "$ASG_NAME" \
+        --desired-capacity "$NEW_DESIRED" \
+        --region "$AWS_REGION"
+      echo "ASG scaled to $NEW_DESIRED"
+
+    # 等待中: ASG 已有足够 desired，等待节点加入 K8s
+    elif [ "$PENDING_PODS" -gt 0 ] && [ "$ASG_DESIRED" -ge "$KEDA_REPLICAS" ]; then
+      echo "⏳ Waiting: ASG desired ($ASG_DESIRED) >= KEDA replicas ($KEDA_REPLICAS)"
+      echo "   Pending pods will be scheduled when nodes join K8s (takes 60-90s)"
+
+    # 场景B: 同步缩容 (节点 ban 自杀后, ASG 仍有 desired > inService 的差值)
+    elif [ "$ASG_DESIRED" -gt "$ASG_INSERVICE" ] && [ "$PENDING_PODS" -eq 0 ]; then
+      echo "🔄 Sync DOWN: desired ($ASG_DESIRED) > inService ($ASG_INSERVICE), no pending pods"
+      echo "   Node likely self-terminated (ban/IP rotation), syncing desired to $ASG_INSERVICE"
+      aws autoscaling set-desired-capacity \
+        --auto-scaling-group-name "$ASG_NAME" \
+        --desired-capacity "$ASG_INSERVICE" \
+        --region "$AWS_REGION"
+      echo "ASG synced to $ASG_INSERVICE"
+
+    # 场景C: 主动缩容 - KEDA 需要的 pod 数少于当前运行的节点数
+    # 一次性缩容到目标值
+    elif [ "$KEDA_REPLICAS" -lt "$ASG_INSERVICE" ] && [ "$PENDING_PODS" -eq 0 ]; then
+      NEW_DESIRED=$KEDA_REPLICAS
+      if [ "$NEW_DESIRED" -lt 0 ]; then NEW_DESIRED=0; fi
+
+      echo "⬇️ Scale DOWN: KEDA needs $KEDA_REPLICAS but have $ASG_INSERVICE nodes"
+      echo "   Scaling down to $NEW_DESIRED immediately"
+      aws autoscaling set-desired-capacity \
+        --auto-scaling-group-name "$ASG_NAME" \
+        --desired-capacity "$NEW_DESIRED" \
+        --region "$AWS_REGION"
+      echo "ASG scaled to $NEW_DESIRED"
+
+    # 场景D: 完全缩容 (KEDA 决定不需要任何 pod)
+    elif [ "$KEDA_REPLICAS" -eq 0 ] && [ "$ASG_INSERVICE" -eq 0 ] && [ "$ASG_DESIRED" -gt 0 ]; then
+      echo "⬇️ Full scale DOWN: KEDA replicas=0, no inService instances"
+      echo "   Cleaning up ASG desired to 0"
+      aws autoscaling set-desired-capacity \
+        --auto-scaling-group-name "$ASG_NAME" \
+        --desired-capacity 0 \
+        --region "$AWS_REGION"
+      echo "ASG scaled to 0"
+
+    else
+      echo "✓ No scaling action needed"
+    fi
+
+    # 场景E: 清理 K8s 中的残留节点 (ASG 已终止但 K8s 未删除)
+    if [ "$K8S_SPOT_NODES" -gt "$ASG_INSERVICE" ]; then
+      echo "🧹 Cleanup: K8s has $K8S_SPOT_NODES spot nodes but ASG only has $ASG_INSERVICE"
+      # 获取 NotReady 的 spot 节点
+      NOTREADY_NODES=$(kubectl get nodes -l node-role=spot --no-headers 2>/dev/null | grep -v " Ready" | awk '{print $1}')
+      for NODE in $NOTREADY_NODES; do
+        echo "   Deleting orphan node: $NODE"
+        kubectl delete node "$NODE" --ignore-not-found || true
+      done
+    fi
+
+    # =========================================================
+    # 3. Ban 检测 - 处理被封禁的节点
+    # =========================================================
+    # py-crawler 被 ban 后会写死亡报告到 Redis
+    # 格式: {"node_id": "spot-i-xxx", "reason": "banned_403", "timestamp": xxx}
+    # 需要终止被 ban 的实例并让 ASG 启动新节点
+
+    echo "--- Checking for banned nodes ---"
+
+    # 读取最新的死亡报告
+    DEATH_REPORT=$(redis-cli -h "$REDIS_HOST" LINDEX "$REDIS_DEATHS_KEY" 0 2>/dev/null || echo "")
+
+    if [ -n "$DEATH_REPORT" ] && [ "$DEATH_REPORT" != "nil" ]; then
+      NODE_ID=$(echo "$DEATH_REPORT" | jq -r '.node_id // empty')
+      REASON=$(echo "$DEATH_REPORT" | jq -r '.reason // empty')
+      TIMESTAMP=$(echo "$DEATH_REPORT" | jq -r '.timestamp // 0')
+
+      if [ -n "$NODE_ID" ] && [ -n "$REASON" ]; then
+        # 检查报告是否在 5 分钟内
+        NOW=$(date +%s)
+        AGE=$((NOW - TIMESTAMP))
+
+        if [ "$AGE" -lt 300 ]; then
+          echo "🚨 Ban detected: node=$NODE_ID, reason=$REASON, age=${AGE}s"
+
+          # 从 node_id (spot-i-xxx) 提取 instance_id (i-xxx)
+          INSTANCE_ID=$(echo "$NODE_ID" | sed 's/^spot-//')
+
+          if [ -n "$INSTANCE_ID" ]; then
+            echo "   Terminating banned instance: $INSTANCE_ID"
+
+            # 终止 EC2 实例
+            aws ec2 terminate-instances \
+              --instance-ids "$INSTANCE_ID" \
+              --region "$AWS_REGION" 2>/dev/null || true
+
+            # 从 K8s 删除节点
+            kubectl delete node "$NODE_ID" --ignore-not-found || true
+
+            # 从 Redis 移除已处理的报告
+            redis-cli -h "$REDIS_HOST" LPOP "$REDIS_DEATHS_KEY" >/dev/null 2>&1 || true
+
+            echo "   Banned node terminated, ASG will launch replacement"
+          fi
+        else
+          echo "   Stale death report (age=${AGE}s > 300s), removing"
+          redis-cli -h "$REDIS_HOST" LPOP "$REDIS_DEATHS_KEY" >/dev/null 2>&1 || true
+        fi
+      fi
+    else
+      echo "   No death reports"
+    fi
+
+    # =========================================================
+    # 4. Tailscale 清理 - 删除 offline 的 spot 节点
+    # =========================================================
+    # ASG 强制终止实例时，tailscale-cleanup.service 不会执行
+    # 需要通过 API 清理残留的 offline 节点
+
+    if [ -n "$TAILSCALE_API_KEY" ]; then
+      echo "--- Cleaning stale Tailscale nodes ---"
+
+      # 获取当前时间戳
+      NOW=$(date +%s)
+
+      # 用 jq 一次性筛选出需要删除的节点 (spot-* 且 offline 超过 5 分钟)
+      # 输出格式: id hostname age
+      STALE_NODES=$(curl -sf -H "Authorization: Bearer $TAILSCALE_API_KEY" \
+        "https://api.tailscale.com/api/v2/tailnet/-/devices" 2>/dev/null | \
+        jq -r --argjson now "$NOW" '
+          .devices[]
+          | select(.hostname | startswith("spot-"))
+          | (.lastSeen | fromdateiso8601) as $lastEpoch
+          | ($now - $lastEpoch) as $age
+          | select($age > 300)
+          | "\(.id) \(.hostname) \($age)"
+        ' 2>/dev/null || echo "")
+
+      if [ -z "$STALE_NODES" ]; then
+        echo "   No stale nodes found"
+      else
+        echo "$STALE_NODES" | while read -r DEV_ID DEV_NAME AGE; do
+          if [ -n "$DEV_ID" ]; then
+            echo "   Removing stale node: $DEV_NAME (offline ${AGE}s)"
+            curl -sf -X DELETE -H "Authorization: Bearer $TAILSCALE_API_KEY" \
+              "https://api.tailscale.com/api/v2/device/$DEV_ID" >/dev/null 2>&1 || true
+          fi
+        done
+      fi
+    else
+      echo "--- Tailscale cleanup skipped (no API key) ---"
+    fi
+
+    echo "=== Done ==="
+
+---
+# CronJob - 每分钟检查
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spot-asg-scaler
+  namespace: kube-system
+spec:
+  schedule: "* * * * *"  # 每分钟
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          serviceAccountName: spot-asg-scaler
+          restartPolicy: OnFailure
+          nodeSelector:
+            node-role: master
+          tolerations:
+          - key: "node-role"
+            operator: "Equal"
+            value: "master"
+            effect: "NoSchedule"
+          containers:
+          - name: scaler
+            image: alpine:3.19
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              # 快速安装依赖 (~5秒)
+              apk add --no-cache curl jq bash aws-cli redis > /dev/null 2>&1
+              # 安装 kubectl
+              curl -sLO "https://dl.k8s.io/release/v1.29.0/bin/linux/amd64/kubectl"
+              chmod +x kubectl && mv kubectl /usr/local/bin/
+              # 运行脚本
+              /bin/bash /scripts/scale.sh
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: TAILSCALE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tailscale-api
+                  key: api-key
+                  optional: true
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: script
+            configMap:
+              name: spot-asg-scaler-script
+              defaultMode: 0755

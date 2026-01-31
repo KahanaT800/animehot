@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'py-crawler Spot Auto Scaling Group for K3s cluster'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID for the ASG
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnet IDs for the ASG (multiple AZs recommended)
+  LaunchTemplateId:
+    Type: String
+    Description: Launch Template ID
+  LaunchTemplateVersion:
+    Type: String
+    Default: '1'
+    Description: Launch Template Version (use specific version number)
+  K3sUrl:
+    Type: String
+    Default: 'https://100.64.0.1:6443'
+    Description: K3s Server URL (Tailscale IP)
+  TailscaleAuthKeyParam:
+    Type: String
+    Default: '/animehot/tailscale-authkey'
+    Description: SSM Parameter name for Tailscale Auth Key
+
+Resources:
+  # IAM Role for Spot Instances
+  SpotInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: py-crawler-spot-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: py-crawler-spot-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # SSM Parameter Access
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/animehot/*'
+              # EC2 Self-Terminate
+              - Effect: Allow
+                Action:
+                  - ec2:TerminateInstances
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    'ec2:ResourceTag/Project': animehot
+              # EC2 Describe
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeTags
+                Resource: '*'
+
+  # IAM Instance Profile
+  SpotInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: py-crawler-spot-role
+      Roles:
+        - !Ref SpotInstanceRole
+
+  # Auto Scaling Group
+  SpotASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: py-crawler-spot-asg
+      MinSize: 0
+      MaxSize: 5
+      DesiredCapacity: 0
+      VPCZoneIdentifier: !Ref SubnetIds
+      HealthCheckType: EC2
+      HealthCheckGracePeriod: 300
+      TerminationPolicies:
+        - OldestInstance
+      # Mixed Instances Policy (多实例类型)
+      MixedInstancesPolicy:
+        InstancesDistribution:
+          OnDemandBaseCapacity: 0
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotAllocationStrategy: capacity-optimized
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref LaunchTemplateId
+            Version: !Ref LaunchTemplateVersion
+          Overrides:
+            - InstanceType: t3.micro
+            - InstanceType: t3a.micro
+            - InstanceType: t2.micro
+            - InstanceType: t3.small
+            - InstanceType: t3a.small
+      Tags:
+        # 由 spot-asg-scaler CronJob 管理
+        - Key: ManagedBy
+          Value: spot-asg-scaler
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: animehot
+          PropagateAtLaunch: true
+        - Key: Environment
+          Value: production
+          PropagateAtLaunch: true
+
+Outputs:
+  ASGName:
+    Description: Auto Scaling Group Name
+    Value: !Ref SpotASG
+  ASGArn:
+    Description: Auto Scaling Group ARN
+    Value: !Sub 'arn:aws:autoscaling:${AWS::Region}:${AWS::AccountId}:autoScalingGroup:*:autoScalingGroupName/${SpotASG}'
+  IAMRoleArn:
+    Description: IAM Role ARN for Spot Instances
+    Value: !GetAtt SpotInstanceRole.Arn

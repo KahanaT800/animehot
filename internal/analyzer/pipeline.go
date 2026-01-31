@@ -56,6 +56,11 @@ type PipelineConfig struct {
 
 	// 自动间隔调整配置
 	IntervalAdjuster IntervalAdjusterConfig
+
+	// 调度时间槽 (对齐到固定时间点，批量处理任务)
+	// 例如 15min: 任务会对齐到 :00, :15, :30, :45
+	// 设为 0 则不对齐
+	ScheduleSlot time.Duration
 }
 
 // DefaultPipelineConfig 返回默认配置
@@ -470,6 +475,13 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 			nextInterval = p.config.IntervalAdjuster.MaxInterval
 		}
 		nextTime := time.Now().Add(nextInterval)
+
+		// 时间槽对齐: 将下次调度时间对齐到固定时间点 (如 :00, :15, :30, :45)
+		// 这样多个 IP 的任务会聚集在同一批次，减少 Spot 实例启停次数
+		if p.config.ScheduleSlot > 0 {
+			nextTime = alignToSlot(nextTime, p.config.ScheduleSlot)
+		}
+
 		if err := p.scheduler.ScheduleIP(ctx, ipID, nextTime); err != nil {
 			slog.Warn("failed to update schedule",
 				slog.Uint64("ip_id", ipID),
@@ -478,7 +490,8 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 			slog.Debug("schedule updated",
 				slog.Uint64("ip_id", ipID),
 				slog.Duration("next_interval", nextInterval),
-				slog.Time("next_time", nextTime))
+				slog.Time("next_time", nextTime),
+				slog.Duration("schedule_slot", p.config.ScheduleSlot))
 		}
 	}
 
@@ -614,4 +627,20 @@ func collectSoldItemsInfo(transitions []StateTransition, items []*pb.Item) []*Pr
 	}
 
 	return soldItems
+}
+
+// alignToSlot 将时间对齐到下一个时间槽
+// 例如 slot=15min 时，12:17 -> 12:30, 12:31 -> 12:45, 12:45 -> 12:45 (恰好在槽上不变)
+func alignToSlot(t time.Time, slot time.Duration) time.Time {
+	if slot <= 0 {
+		return t
+	}
+	// Truncate 向下取整到槽边界
+	truncated := t.Truncate(slot)
+	// 如果已经在槽边界上，直接返回
+	if truncated.Equal(t) {
+		return t
+	}
+	// 否则对齐到下一个槽
+	return truncated.Add(slot)
 }

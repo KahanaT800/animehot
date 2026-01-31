@@ -46,6 +46,7 @@ type SchedulerConfig struct {
 	BaseInterval          time.Duration `json:"base_interval"`          // 基础调度间隔 (权重 1.0 时的间隔，默认 1h)
 	MinInterval           time.Duration `json:"min_interval"`           // 最小调度间隔 (高权重 IP 下限，默认 15m)
 	MaxInterval           time.Duration `json:"max_interval"`           // 最大调度间隔 (低权重 IP 上限，默认 1h)
+	ScheduleSlot          time.Duration `json:"schedule_slot"`          // 调度时间槽 (对齐到固定时间点，默认 15m，0=不对齐)
 	BatchSize             int           `json:"batch_size"`             // 每批投递任务数 (默认 10)
 	BackpressureThreshold int           `json:"backpressure_threshold"` // 反压阈值，队列低于此值时投递下一批 (默认 batch_size/2)
 	JanitorInterval       time.Duration `json:"janitor_interval"`       // Janitor 扫描间隔
@@ -147,6 +148,7 @@ func DefaultConfig() *Config {
 			BaseInterval:    2 * time.Hour,
 			MinInterval:     1 * time.Hour,
 			MaxInterval:     2 * time.Hour,
+			ScheduleSlot:    15 * time.Minute, // 对齐到 :00, :15, :30, :45
 			BatchSize:       50,
 			JanitorInterval: 10 * time.Minute,
 			JanitorTimeout:  30 * time.Minute,
@@ -367,6 +369,11 @@ func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("SCHEDULER_MAX_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.Scheduler.MaxInterval = d
+		}
+	}
+	if v := os.Getenv("SCHEDULER_SCHEDULE_SLOT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.Scheduler.ScheduleSlot = d
 		}
 	}
 	if v := os.Getenv("JANITOR_INTERVAL"); v != "" {

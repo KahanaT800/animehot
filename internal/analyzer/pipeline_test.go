@@ -510,3 +510,43 @@ type mockSchedulerWithRedis struct {
 func (m *mockSchedulerWithRedis) ScheduleIP(ctx context.Context, ipID uint64, nextTime time.Time) error {
 	return m.scheduleFunc(ctx, ipID, nextTime)
 }
+
+func TestAlignToSlot(t *testing.T) {
+	slot := 15 * time.Minute
+
+	tests := []struct {
+		name     string
+		input    time.Time
+		expected time.Time
+	}{
+		{
+			name:     "already aligned",
+			input:    time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC),
+			expected: time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "round up from 12:17",
+			input:    time.Date(2026, 1, 31, 12, 17, 0, 0, time.UTC),
+			expected: time.Date(2026, 1, 31, 12, 30, 0, 0, time.UTC),
+		},
+		{
+			name:     "round up from 12:31",
+			input:    time.Date(2026, 1, 31, 12, 31, 0, 0, time.UTC),
+			expected: time.Date(2026, 1, 31, 12, 45, 0, 0, time.UTC),
+		},
+		{
+			name:     "cross hour boundary",
+			input:    time.Date(2026, 1, 31, 12, 59, 0, 0, time.UTC),
+			expected: time.Date(2026, 1, 31, 13, 0, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := alignToSlot(tt.input, slot)
+			if !result.Equal(tt.expected) {
+				t.Errorf("alignToSlot(%v) = %v, want %v", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

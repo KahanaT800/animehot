@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: animehot
+  labels:
+    app.kubernetes.io/name: animehot
+    app.kubernetes.io/managed-by: kubectl

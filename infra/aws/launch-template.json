@@ -1,0 +1,60 @@
+{
+  "LaunchTemplateName": "py-crawler-spot",
+  "LaunchTemplateData": {
+    "ImageId": "ami-0d52744d6551d851e",
+    "InstanceType": "t3.micro",
+    "IamInstanceProfile": {
+      "Name": "py-crawler-spot-role"
+    },
+    "KeyName": "animehot-key",
+    "SecurityGroupIds": [
+      "sg-REPLACE_ME"
+    ],
+    "BlockDeviceMappings": [
+      {
+        "DeviceName": "/dev/xvda",
+        "Ebs": {
+          "VolumeSize": 20,
+          "VolumeType": "gp3",
+          "DeleteOnTermination": true
+        }
+      }
+    ],
+    "MetadataOptions": {
+      "HttpTokens": "required",
+      "HttpPutResponseHopLimit": 2,
+      "HttpEndpoint": "enabled"
+    },
+    "Monitoring": {
+      "Enabled": false
+    },
+    "TagSpecifications": [
+      {
+        "ResourceType": "instance",
+        "Tags": [
+          {"Key": "Name", "Value": "py-crawler-spot"},
+          {"Key": "Project", "Value": "animehot"},
+          {"Key": "Environment", "Value": "production"},
+          {"Key": "ManagedBy", "Value": "spot-asg-scaler"}
+        ]
+      },
+      {
+        "ResourceType": "volume",
+        "Tags": [
+          {"Key": "Name", "Value": "py-crawler-spot-volume"},
+          {"Key": "Project", "Value": "animehot"}
+        ]
+      }
+    ],
+    "UserData": "BASE64_ENCODED_USER_DATA_SCRIPT"
+  },
+  "TagSpecifications": [
+    {
+      "ResourceType": "launch-template",
+      "Tags": [
+        {"Key": "Name", "Value": "py-crawler-spot"},
+        {"Key": "Project", "Value": "animehot"}
+      ]
+    }
+  ]
+}
