@@ -332,7 +332,6 @@ services:
       - analyzer
       - redis-exporter
       - mysql-exporter
-      - cadvisor
       - node-exporter
     logging:
       driver: "json-file"
@@ -342,22 +341,22 @@ services:
     networks:
       - animehot-net
 
-  cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.55.1
-    container_name: animehot-cadvisor
-    restart: always
-    profiles: ["monitoring"]
-    privileged: true
-    devices:
-      - /dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    networks:
-      - animehot-net
+  # cadvisor: (已移除 - 节省 6% CPU + 94 MiB 内存)
+  #   image: gcr.io/cadvisor/cadvisor:v0.55.1
+  #   container_name: animehot-cadvisor
+  #   restart: always
+  #   profiles: ["monitoring"]
+  #   privileged: true
+  #   devices:
+  #     - /dev/kmsg
+  #   volumes:
+  #     - /:/rootfs:ro
+  #     - /var/run:/var/run:ro
+  #     - /sys:/sys:ro
+  #     - /var/lib/docker/:/var/lib/docker:ro
+  #     - /dev/disk/:/dev/disk:ro
+  #   networks:
+  #     - animehot-net
 
   node-exporter:
     image: prom/node-exporter:v1.8.1

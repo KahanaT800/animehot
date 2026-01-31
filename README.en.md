@@ -3,6 +3,9 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python)](https://python.org/)
+[![K3s](https://img.shields.io/badge/K3s-Lightweight%20K8s-FFC61C?style=flat&logo=k3s)](https://k3s.io/)
+[![Redis](https://img.shields.io/badge/Redis-7.x-DC382D?style=flat&logo=redis)](https://redis.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-Cloud-F46800?style=flat&logo=grafana)](https://grafana.com/)
 [![CI](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml)
 [![Deploy](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -59,36 +62,47 @@ Anime Hot analyzes the flow of anime merchandise on [Mercari](https://jp.mercari
 graph TB
     CLIENT[Client]
 
-    subgraph EC2[AWS EC2 - Main Node]
+    subgraph EC2[AWS EC2 - Main Node / K3s Server]
         NGINX[Nginx :80/:443]
         ANALYZER[Analyzer :8080]
-        CRAWLER1[Py-Crawler]
         MYSQL[(MySQL)]
         REDIS[(Redis)]
-        ALLOY1[Alloy]
+        KEDA[KEDA]
+        SCALER[Spot ASG Scaler]
     end
 
-    subgraph LOCAL[Local Machine - Crawler Node]
-        CRAWLER2[Py-Crawler]
-        ALLOY2[Alloy]
+    subgraph SPOT[AWS Spot Node Pool - K3s Agent]
+        CRAWLER1[py-crawler Pod]
+        CRAWLER2[py-crawler Pod]
+        ALLOY[Alloy DaemonSet]
     end
 
     MERCARI[Mercari]
     GRAFANA[Grafana Cloud]
+    ASG[EC2 Auto Scaling Group]
 
     CLIENT --> NGINX
     NGINX --> ANALYZER
     ANALYZER <--> MYSQL
     ANALYZER <--> REDIS
-    CRAWLER1 <--> REDIS
-    CRAWLER1 --> MERCARI
 
-    CRAWLER2 -.->|Tailscale VPN| REDIS
-    CRAWLER2 --> MERCARI
+    KEDA -->|Queue Depth| SCALER
+    SCALER -->|Adjust Capacity| ASG
+    ASG -->|Launch/Terminate| SPOT
 
-    ALLOY1 --> GRAFANA
-    ALLOY2 --> GRAFANA
+    CRAWLER1 & CRAWLER2 -.->|Tailscale VPN| REDIS
+    CRAWLER1 & CRAWLER2 --> MERCARI
+
+    ALLOY --> GRAFANA
 ```
+
+### Core Design
+
+- **K3s Cluster**: EC2 main node as Server, Spot instances as Agent nodes
+- **KEDA Auto-scaling**: Automatically adjusts py-crawler replicas based on Redis queue depth
+- **Spot ASG Scaler**: Launches Spot nodes when Pods are pending, auto-terminates on idle
+- **Tailscale VPN**: Spot nodes connect to main node's Redis via Tailscale
+- **Grafana Alloy**: Deployed as DaemonSet, auto-collects metrics and logs from all nodes
 
 ### Task Flow
 
@@ -219,56 +233,66 @@ export LETSENCRYPT_EMAIL=admin@your-domain.com
 - [ ] HTTPS enforced with HSTS
 - [ ] `/metrics` endpoint blocked from external access
 
-## Distributed Crawler Setup
+## K8s/Spot Distributed Crawler
 
-Run additional crawler nodes on local machines to increase crawling capacity.
+Use AWS Spot instances to scale crawler capacity on-demand. Cost is 10-30% of on-demand instances.
 
-### Prerequisites
+### Architecture Overview
 
-1. Install [Tailscale](https://tailscale.com/) on both EC2 and local machine
-2. Join the same Tailnet
-3. Note the EC2's Tailscale IP (e.g., `100.99.127.100`)
-
-### Local Crawler Setup
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/lyc0603/animetop.git
-cd animetop
-
-# 2. Create crawler config
-cp .env.crawler.example .env.crawler
-
-# 3. Edit .env.crawler
-#    - Set REDIS_REMOTE_ADDR to EC2's Tailscale IP
-#    - Configure Grafana Cloud credentials (optional)
-
-# 4. Start crawler
-docker compose -f docker-compose.crawler.yml up -d
-
-# 5. With monitoring (optional)
-docker compose -f docker-compose.crawler.yml --profile monitoring up -d
-
-# 6. Check logs
-docker logs -f animehot-crawler-local
+```
+EC2 Main Node (K3s Server)          Spot Node Pool (K3s Agent)
+┌─────────────────────┐          ┌─────────────────────┐
+│  Analyzer           │          │  py-crawler Pod     │
+│  MySQL / Redis      │◄─────────│  py-crawler Pod     │
+│  KEDA               │ Tailscale│  Alloy DaemonSet    │
+│  Spot ASG Scaler    │          └─────────────────────┘
+└─────────────────────┘                    ▲
+         │                                 │
+         ▼                                 │
+   ┌───────────┐     Adjust       ┌───────────────┐
+   │Queue Depth│ ────────────────▶│   EC2 ASG     │
+   └───────────┘                  └───────────────┘
 ```
 
-### Environment Variables (.env.crawler)
+### Auto-scaling Logic
+
+| Trigger | Action |
+|---------|--------|
+| Queue depth > 0 | KEDA creates py-crawler Pods |
+| Pod pending (no nodes) | Scaler launches Spot instances |
+| Node idle 15min | Scaler terminates Spot instances |
+| Spot interruption notice | Graceful Pod shutdown, auto node cleanup |
+
+### K3s Cluster Initialization
 
 ```bash
-# Redis connection (EC2 Tailscale IP)
-REDIS_REMOTE_ADDR=100.99.127.100:6379
+# EC2 Main Node - Install K3s Server
+curl -sfL https://get.k3s.io | sh -s - server \
+  --tls-san $(tailscale ip -4) \
+  --node-external-ip $(tailscale ip -4)
 
-# Crawler settings
-BROWSER_MAX_CONCURRENCY=3
-MAX_TASKS=50
+# Get join token
+cat /var/lib/rancher/k3s/server/node-token
 
-# Grafana Cloud (optional)
-GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL=https://prometheus-xxx.grafana.net/api/prom/push
-GRAFANA_CLOUD_PROM_USERNAME=123456
-GRAFANA_CLOUD_PROM_API_KEY=glc_xxx
-HOSTNAME=animehot-local
+# Deploy K8s resources
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/secrets.yaml  # Fill in credentials first
+kubectl apply -f k8s/py-crawler.yaml
+kubectl apply -f k8s/keda-scaledobject.yaml
+kubectl apply -f k8s/spot-asg-scaler.yaml
+kubectl apply -f k8s/alloy-configmap.yaml
+kubectl apply -f k8s/alloy-daemonset.yaml
 ```
+
+### Key K8s Resources
+
+| File | Description |
+|------|-------------|
+| `k8s/py-crawler.yaml` | py-crawler Deployment |
+| `k8s/keda-scaledobject.yaml` | KEDA auto-scaling rules |
+| `k8s/spot-asg-scaler.yaml` | Spot node management CronJob |
+| `k8s/alloy-*.yaml` | Grafana Alloy monitoring configs |
+| `k8s/secrets.yaml.template` | Credentials template |
 
 ## Monitoring
 
@@ -301,19 +325,20 @@ Import the business dashboard from `deploy/grafana/dashboards/animehot-business.
 
 | Section | Panels |
 |---------|--------|
-| Overview | Service Status, Active Tasks, Queue Pending |
-| EC2 Crawler | Latency, Activity |
-| Local Crawler | Latency, Activity |
-| Comparison | Latency Comparison, Request Rate |
+| Overview | Service Status, Active Tasks, Queue Depth |
+| Spot Py-Crawler | Crawler Count, Task Progress, Latency, Auth Mode |
 | Task Queue | Throughput, Queue Status |
+| Redis Queues | DLQ, Schedule IPs, Task/Result Queue |
 
 ### Key Metrics
 
 | Metric | Description |
 |--------|-------------|
-| `up{job="animetop-*"}` | Service health |
-| `animetop_active_tasks` | Currently processing tasks |
-| `animetop_crawler_request_duration_seconds` | Page fetch latency |
+| `up{job="animetop-analyzer"}` | Analyzer health |
+| `up{app="py-crawler", cluster="animehot-k3s"}` | Spot crawler health |
+| `mercari_crawler_tasks_in_progress{cluster="animehot-k3s"}` | Spot tasks in progress |
+| `mercari_crawler_api_request_duration_seconds` | API request latency |
+| `mercari_crawler_auth_mode` | Auth mode (0=HTTP, 1=Browser) |
 | `animetop_scheduler_tasks_pending_in_queue` | Queue depth |
 
 ## API Endpoints
@@ -474,6 +499,13 @@ animetop/
 │   │   ├── ratelimit/     # Rate limiting
 │   │   └── redisqueue/    # Reliable queue
 │   └── scheduler/         # IP scheduling
+├── k8s/                   # Kubernetes manifests
+│   ├── py-crawler.yaml    # py-crawler Deployment
+│   ├── keda-scaledobject.yaml  # KEDA auto-scaling
+│   ├── spot-asg-scaler.yaml    # Spot node management
+│   └── alloy-*.yaml       # Grafana Alloy DaemonSet
+├── infra/aws/             # AWS infrastructure
+│   └── user-data-spot.sh  # Spot instance bootstrap
 ├── deploy/
 │   ├── nginx/             # Nginx configuration
 │   ├── certbot/           # SSL initialization
@@ -531,37 +563,40 @@ Individual item tracking.
 # Check queue depth
 redis-cli LLEN animetop:queue:tasks
 
-# Check crawler logs
-docker logs animehot-crawler-local --tail 100
+# Check py-crawler Pod status (K8s)
+kubectl get pods -n animehot -l app=py-crawler
 
-# Verify Redis connection (for local crawler)
-docker exec animehot-crawler-local redis-cli -h 100.99.127.100 PING
+# Check py-crawler logs (K8s)
+kubectl logs -n animehot -l app=py-crawler --tail=100
+
+# Check Spot nodes
+kubectl get nodes -l node-role=spot
 ```
 
 ### Metrics not showing in Grafana
 
 ```bash
-# Check metrics endpoint
-curl localhost:2112/metrics | head -20
+# Check Alloy DaemonSet status
+kubectl get ds -n animehot alloy
 
 # Check Alloy logs
-docker logs animehot-alloy-local --tail 50
+kubectl logs -n animehot -l app=alloy --tail=50
 
 # Verify up metric
-# In Grafana: up{job="animetop-crawler-local"}
+# In Grafana: up{app="py-crawler", cluster="animehot-k3s"}
 ```
 
-### High CPU on EC2
+### Spot nodes not launching
 
 ```bash
-# Check container resource usage
-docker stats --no-stream
+# Check KEDA ScaledObject
+kubectl get scaledobject -n animehot
 
-# Check active crawl tasks
-curl localhost:2112/metrics | grep animetop_active_tasks
+# Check spot-asg-scaler logs
+kubectl logs -n animehot -l app=spot-asg-scaler --tail=50
 
-# Reduce concurrency if needed
-# Edit BROWSER_MAX_CONCURRENCY in .env
+# Check EC2 ASG status
+aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names animehot-spot
 ```
 
 ## License
@@ -575,3 +610,5 @@ MIT
 - [Gin](https://github.com/gin-gonic/gin) - Web framework
 - [Grafana](https://grafana.com/) - Monitoring
 - [Tailscale](https://tailscale.com/) - VPN for distributed crawlers
+- [K3s](https://k3s.io/) - Lightweight Kubernetes
+- [KEDA](https://keda.sh/) - Kubernetes auto-scaling

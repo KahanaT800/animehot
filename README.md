@@ -4,6 +4,9 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python)](https://python.org/)
+[![K3s](https://img.shields.io/badge/K3s-Lightweight%20K8s-FFC61C?style=flat&logo=k3s)](https://k3s.io/)
+[![Redis](https://img.shields.io/badge/Redis-7.x-DC382D?style=flat&logo=redis)](https://redis.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-Cloud-F46800?style=flat&logo=grafana)](https://grafana.com/)
 [![CI](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/ci.yml)
 [![Deploy](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml/badge.svg)](https://github.com/KahanaT800/animehot/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -66,36 +69,47 @@
 graph TB
     CLIENT[浏览器]
 
-    subgraph EC2[AWS EC2 - 云端主节点]
+    subgraph EC2[AWS EC2 - 主节点 / K3s Server]
         NGINX[Nginx :80/:443]
         ANALYZER[Analyzer :8080]
-        CRAWLER1[Py-Crawler]
         MYSQL[(MySQL)]
         REDIS[(Redis)]
-        ALLOY1[Alloy]
+        KEDA[KEDA]
+        SCALER[Spot ASG Scaler]
     end
 
-    subgraph LOCAL[本地电脑 - 爬虫分身]
-        CRAWLER2[Py-Crawler]
-        ALLOY2[Alloy]
+    subgraph SPOT[AWS Spot 节点池 - K3s Agent]
+        CRAWLER1[py-crawler Pod]
+        CRAWLER2[py-crawler Pod]
+        ALLOY[Alloy DaemonSet]
     end
 
     MERCARI[煤炉]
     GRAFANA[Grafana Cloud]
+    ASG[EC2 Auto Scaling Group]
 
     CLIENT --> NGINX
     NGINX --> ANALYZER
     ANALYZER <--> MYSQL
     ANALYZER <--> REDIS
-    CRAWLER1 <--> REDIS
-    CRAWLER1 --> MERCARI
 
-    CRAWLER2 -.->|Tailscale VPN| REDIS
-    CRAWLER2 --> MERCARI
+    KEDA -->|队列深度| SCALER
+    SCALER -->|调整容量| ASG
+    ASG -->|启动/终止| SPOT
 
-    ALLOY1 --> GRAFANA
-    ALLOY2 --> GRAFANA
+    CRAWLER1 & CRAWLER2 -.->|Tailscale VPN| REDIS
+    CRAWLER1 & CRAWLER2 --> MERCARI
+
+    ALLOY --> GRAFANA
 ```
+
+### 核心设计
+
+- **K3s 集群**: EC2 主节点作为 Server，Spot 实例作为 Agent 节点
+- **KEDA 自动扩缩容**: 根据 Redis 队列深度自动调整 py-crawler 副本数
+- **Spot ASG Scaler**: 根据 Pod pending 状态启动 Spot 节点，空闲时自动终止
+- **Tailscale VPN**: Spot 节点通过 Tailscale 连接主节点的 Redis
+- **Grafana Alloy**: DaemonSet 方式部署，自动收集所有节点的指标和日志
 
 ### 任务流程
 
@@ -226,56 +240,75 @@ export LETSENCRYPT_EMAIL=admin@your-domain.com
 - [ ] 强制 HTTPS + HSTS
 - [ ] `/metrics` 端点禁止外部访问
 
-## 分布式爬虫
+## K8s/Spot 分布式爬虫
 
-在本地电脑跑个爬虫分身，提升爬取效率！
+使用 AWS Spot 实例按需扩展爬虫容量，成本仅为按需实例的 10-30%。
 
-### 前置准备
+### 架构说明
 
-1. EC2 和本地电脑都装上 [Tailscale](https://tailscale.com/)
-2. 加入同一个 Tailnet
-3. 记下 EC2 的 Tailscale IP (类似 `100.99.127.100`)
-
-### 本地爬虫配置
-
-```bash
-# 1. 克隆仓库
-git clone https://github.com/lyc0603/animetop.git
-cd animetop
-
-# 2. 创建爬虫配置
-cp .env.crawler.example .env.crawler
-
-# 3. 编辑 .env.crawler
-#    - 把 REDIS_REMOTE_ADDR 改成 EC2 的 Tailscale IP
-#    - 配置 Grafana Cloud 凭据 (可选)
-
-# 4. 启动爬虫
-docker compose -f docker-compose.crawler.yml up -d
-
-# 5. 带监控启动 (可选)
-docker compose -f docker-compose.crawler.yml --profile monitoring up -d
-
-# 6. 查看日志
-docker logs -f animehot-py-crawler-local
+```
+EC2 主节点 (K3s Server)          Spot 节点池 (K3s Agent)
+┌─────────────────────┐          ┌─────────────────────┐
+│  Analyzer           │          │  py-crawler Pod     │
+│  MySQL / Redis      │◄─────────│  py-crawler Pod     │
+│  KEDA               │ Tailscale│  Alloy DaemonSet    │
+│  Spot ASG Scaler    │          └─────────────────────┘
+└─────────────────────┘                    ▲
+         │                                 │
+         ▼                                 │
+   ┌───────────┐     调整容量      ┌───────────────┐
+   │ 队列深度  │ ─────────────────▶│  EC2 ASG      │
+   └───────────┘                   └───────────────┘
 ```
 
-### 环境变量 (.env.crawler)
+### 自动扩缩容逻辑
+
+| 触发条件 | 动作 |
+|---------|------|
+| 队列深度 > 0 | KEDA 创建 py-crawler Pod |
+| Pod pending (无节点) | Scaler 启动 Spot 实例 |
+| 节点空闲 15 分钟 | Scaler 终止 Spot 实例 |
+| Spot 中断通知 | 优雅关闭 Pod，节点自动清理 |
+
+### K3s 集群初始化
 
 ```bash
-# Redis 连接 (EC2 的 Tailscale IP)
-REDIS_REMOTE_ADDR=100.99.127.100:6379
+# EC2 主节点 - 安装 K3s Server
+curl -sfL https://get.k3s.io | sh -s - server \
+  --tls-san $(tailscale ip -4) \
+  --node-external-ip $(tailscale ip -4)
 
-# 爬虫设置
-BROWSER_MAX_CONCURRENCY=3
-MAX_TASKS=50
+# 获取 join token
+cat /var/lib/rancher/k3s/server/node-token
 
-# Grafana Cloud (可选)
-GRAFANA_CLOUD_PROM_REMOTE_WRITE_URL=https://prometheus-xxx.grafana.net/api/prom/push
-GRAFANA_CLOUD_PROM_USERNAME=123456
-GRAFANA_CLOUD_PROM_API_KEY=glc_xxx
-HOSTNAME=animehot-local
+# 部署 K8s 资源
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/secrets.yaml  # 需要先填入凭据
+kubectl apply -f k8s/py-crawler.yaml
+kubectl apply -f k8s/keda-scaledobject.yaml
+kubectl apply -f k8s/spot-asg-scaler.yaml
+kubectl apply -f k8s/alloy-configmap.yaml
+kubectl apply -f k8s/alloy-daemonset.yaml
 ```
+
+### Spot 节点配置
+
+Spot 实例启动时自动执行 `infra/aws/user-data-spot.sh`:
+
+1. 安装 Tailscale 并加入网络
+2. 加入 K3s 集群作为 Agent 节点
+3. 设置 Tailscale 清理 hook (终止时自动注销)
+4. 监听 Spot 中断通知
+
+### 关键 K8s 资源
+
+| 文件 | 说明 |
+|------|------|
+| `k8s/py-crawler.yaml` | py-crawler Deployment |
+| `k8s/keda-scaledobject.yaml` | KEDA 自动扩缩容规则 |
+| `k8s/spot-asg-scaler.yaml` | Spot 节点管理 CronJob |
+| `k8s/alloy-*.yaml` | Grafana Alloy 监控配置 |
+| `k8s/secrets.yaml.template` | 凭据模板 |
 
 ## 监控
 
@@ -308,21 +341,22 @@ docker compose -f docker-compose.prod.yml --profile monitoring up -d
 
 | 区域 | 面板 |
 |------|------|
-| 概览 | 服务状态、活跃任务、队列等待 |
-| EC2 爬虫 | 延迟、活动情况 |
-| 本地爬虫 | 延迟、活动情况 |
-| 对比 | 延迟对比、请求速率 |
-| 任务队列 | 吞吐量、队列状态 |
+| Overview | 服务状态、活跃任务、队列深度 |
+| Spot Py-Crawler | 爬虫数、任务进度、延迟、Auth 模式 |
+| Task Queue | 任务吞吐量、队列状态 |
+| Redis Queues | DLQ、调度 IP、任务/结果队列 |
 
 ### 关键指标
 
 | 指标 | 说明 |
 |------|------|
-| `up{job="animetop-*"}` | 服务健康状态 |
-| `mercari_crawler_tasks_in_progress` | 正在处理的任务数 |
+| `up{job="animetop-analyzer"}` | Analyzer 健康状态 |
+| `up{app="py-crawler", cluster="animehot-k3s"}` | Spot 爬虫健康状态 |
+| `mercari_crawler_tasks_in_progress{cluster="animehot-k3s"}` | Spot 正在处理的任务数 |
 | `mercari_crawler_api_request_duration_seconds` | API 请求延迟 |
 | `mercari_crawler_auth_mode` | 认证模式 (0=HTTP, 1=Browser) |
 | `animetop_scheduler_tasks_pending_in_queue` | 队列深度 |
+| `animetop_queue_length{queue="schedule"}` | 已调度的 IP 数量 |
 
 ## API 接口
 
@@ -466,7 +500,7 @@ make grayscale-clean    # 清理
 animetop/
 ├── cmd/
 │   ├── analyzer/          # API + 调度器 + 处理管道
-│   ├── crawler/           # 无头浏览器爬虫
+│   ├── crawler/           # Go 爬虫 (deprecated)
 │   └── import/            # IP数据导入工具
 ├── internal/
 │   ├── analyzer/          # 核心分析逻辑
@@ -475,25 +509,36 @@ animetop/
 │   │   └── cache.go       # 缓存管理
 │   ├── api/               # HTTP 接口
 │   ├── config/            # 配置
-│   ├── crawler/           # Go 爬虫 (deprecated)
 │   ├── model/             # 数据库模型 (GORM)
 │   ├── pkg/               # 公共工具库
 │   │   ├── metrics/       # Prometheus 指标
 │   │   ├── ratelimit/     # 限流
 │   │   └── redisqueue/    # 可靠队列
-│   └── scheduler/         # IP 调度
+│   └── scheduler/         # IP 调度 (ZSET 持久化)
 ├── py-crawler/            # Python 爬虫 (私有子模块)
+├── k8s/                   # Kubernetes 资源
+│   ├── py-crawler.yaml    # 爬虫 Deployment
+│   ├── keda-scaledobject.yaml  # KEDA 自动扩缩容
+│   ├── spot-asg-scaler.yaml    # Spot 节点管理
+│   ├── alloy-*.yaml       # Grafana Alloy 监控
+│   └── secrets.yaml.template   # 凭据模板
+├── infra/aws/             # AWS 基础设施
+│   ├── asg.yaml           # Auto Scaling Group 配置
+│   ├── launch-template.json    # EC2 Launch Template
+│   ├── user-data-spot.sh  # Spot 实例初始化脚本
+│   └── iam-policy.json    # IAM 策略
 ├── deploy/
 │   ├── nginx/             # Nginx 配置
 │   ├── certbot/           # SSL 初始化
-│   ├── alloy/             # Grafana Alloy 配置
 │   └── grafana/           # 仪表盘 JSON
+├── scripts/
+│   └── k3s-init.sh        # K3s 集群初始化
 ├── proto/                 # Protocol Buffers
 ├── migrations/            # 数据库迁移
 ├── data/                  # 测试数据 (IP JSON)
 ├── docker-compose.yml           # 开发环境
 ├── docker-compose.prod.yml      # 生产环境 (EC2)
-└── docker-compose.crawler.yml   # 本地爬虫节点
+└── docker-compose.crawler.yml   # 本地爬虫节点 (备用)
 ```
 
 ## 数据库设计
@@ -540,40 +585,56 @@ animetop/
 # 检查队列深度
 redis-cli LLEN animetop:queue:tasks
 
+# 检查 Spot 爬虫 Pod 状态
+kubectl get pods -n animehot -l app=py-crawler
+
 # 检查爬虫日志
-docker logs animehot-py-crawler-local --tail 100
+kubectl logs -n animehot -l app=py-crawler --tail 100
 
-# 检查爬虫健康状态
-curl localhost:8081/health
-
-# 检查认证模式
-curl localhost:2112/metrics | grep mercari_crawler_auth_mode
+# 检查 KEDA ScaledObject 状态
+kubectl get scaledobject -n animehot
 ```
 
-### Grafana 看不到指标
+### Spot 节点没有启动
 
 ```bash
-# 检查 metrics 端点
-curl localhost:2112/metrics | head -20
+# 检查 Scaler 日志
+kubectl logs -n kube-system -l app=spot-asg-scaler --tail 50
+
+# 检查 ASG 状态
+aws autoscaling describe-auto-scaling-groups \
+  --auto-scaling-group-names animehot-spot-asg
+
+# 手动触发扩容 (测试用)
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name animehot-spot-asg \
+  --desired-capacity 1
+```
+
+### Grafana 看不到 Spot 指标
+
+```bash
+# 检查 Alloy Pod 状态
+kubectl get pods -n animehot -l app=alloy
 
 # 检查 Alloy 日志
-docker logs animehot-alloy-local --tail 50
+kubectl logs -n animehot daemonset/alloy --tail 50
 
 # 验证 up 指标
-# 在 Grafana: up{job="animetop-crawler-local"}
+# 在 Grafana: up{app="py-crawler", cluster="animehot-k3s"}
 ```
 
-### EC2 CPU 爆了
+### Spot 节点加入失败
 
 ```bash
-# 检查容器资源使用
-docker stats --no-stream
+# SSH 到 Spot 实例检查日志
+journalctl -u k3s-agent -f
 
-# 检查活跃爬取任务
-curl localhost:2112/metrics | grep animetop_active_tasks
+# 检查 Tailscale 状态
+tailscale status
 
-# 降低并发数
-# 编辑 .env 中的 BROWSER_MAX_CONCURRENCY
+# 检查 K3s Server 连接
+curl -k https://100.99.127.100:6443/healthz
 ```
 
 ## 开源协议
@@ -583,7 +644,9 @@ MIT
 ## 致谢
 
 - [煤炉](https://jp.mercari.com/) - 数据来源
-- [go-rod](https://github.com/go-rod/rod) - 浏览器自动化
+- [Playwright](https://playwright.dev/) - 浏览器自动化
 - [Gin](https://github.com/gin-gonic/gin) - Web 框架
+- [K3s](https://k3s.io/) - 轻量 Kubernetes
+- [KEDA](https://keda.sh/) - 自动扩缩容
 - [Grafana](https://grafana.com/) - 监控
-- [Tailscale](https://tailscale.com/) - 分布式爬虫 VPN
+- [Tailscale](https://tailscale.com/) - 分布式 VPN

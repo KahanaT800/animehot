@@ -27,12 +27,13 @@ data:
         action        = "keep"
       }
 
-      // Use custom metrics port if specified
+      // Use custom metrics port if specified - combine pod IP with port
       rule {
-        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        source_labels = ["__meta_kubernetes_pod_ip", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        separator     = ":"
         target_label  = "__address__"
-        regex         = "(.+)"
-        replacement   = "${1}"
+        regex         = "(.+):(.+)"
+        replacement   = "${1}:${2}"
         action        = "replace"
       }
 
@@ -64,7 +65,7 @@ data:
     }
 
     // ============================================
-    // Prometheus Scrape
+    // Prometheus Scrape - K8s Pods
     // ============================================
     prometheus.scrape "pods" {
       targets    = discovery.relabel.pods.output

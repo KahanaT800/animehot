@@ -15,16 +15,6 @@ prometheus.scrape "analyzer" {
   job_name = "animetop-analyzer"
 }
 
-// Scrape Python crawler metrics
-prometheus.scrape "py_crawler" {
-  targets = [{
-    __address__ = "py-crawler:2112",
-  }]
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-  scrape_interval = "15s"
-  job_name = "animetop-py-crawler"
-}
-
 // Scrape Redis exporter
 prometheus.scrape "redis" {
   targets = [{
@@ -43,16 +33,6 @@ prometheus.scrape "mysql" {
   forward_to = [prometheus.remote_write.grafana_cloud.receiver]
   scrape_interval = "15s"
   job_name = "animetop-mysql"
-}
-
-// Scrape cAdvisor (container metrics)
-prometheus.scrape "cadvisor" {
-  targets = [{
-    __address__ = "cadvisor:8080",
-  }]
-  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
-  scrape_interval = "15s"
-  job_name = "animetop-cadvisor"
 }
 
 // Scrape Node exporter (host metrics)
