@@ -194,6 +194,57 @@ data:
     fi
 
     # =========================================================
+    # 场景F: 僵尸实例检测 - ASG 有实例但 K8s 没有对应节点
+    # 启动超过 5 分钟但仍未加入 K8s 的实例视为僵尸
+    # =========================================================
+    if [ "$ASG_INSERVICE" -gt 0 ]; then
+      echo "--- Checking for zombie instances ---"
+
+      # 获取 ASG 中的 InService 实例 ID 列表
+      ASG_INSTANCES=$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names "$ASG_NAME" \
+        --region "$AWS_REGION" \
+        --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId' \
+        --output text 2>/dev/null | tr '\t' '\n')
+
+      # 获取 K8s 中 Ready 的 spot 节点名称 (格式: spot-i-xxx)
+      K8S_READY_NODES=$(kubectl get nodes -l node-role=spot --no-headers 2>/dev/null | grep " Ready" | awk '{print $1}' || echo "")
+
+      for INSTANCE_ID in $ASG_INSTANCES; do
+        NODE_NAME="spot-${INSTANCE_ID}"
+
+        # 检查节点是否在 K8s 中且 Ready
+        if ! echo "$K8S_READY_NODES" | grep -q "^${NODE_NAME}$"; then
+          # 获取实例启动时间
+          LAUNCH_TIME=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --region "$AWS_REGION" \
+            --query 'Reservations[0].Instances[0].LaunchTime' \
+            --output text 2>/dev/null || echo "")
+
+          if [ -n "$LAUNCH_TIME" ] && [ "$LAUNCH_TIME" != "None" ]; then
+            LAUNCH_EPOCH=$(date -d "$LAUNCH_TIME" +%s 2>/dev/null || echo "0")
+            NOW=$(date +%s)
+            AGE=$((NOW - LAUNCH_EPOCH))
+
+            # 超过 5 分钟 (300秒) 仍未加入，视为僵尸
+            if [ "$AGE" -gt 300 ]; then
+              echo "🧟 Zombie detected: $INSTANCE_ID (age=${AGE}s, not in K8s Ready nodes)"
+              echo "   Terminating zombie instance..."
+              aws ec2 terminate-instances \
+                --instance-ids "$INSTANCE_ID" \
+                --region "$AWS_REGION" 2>/dev/null || true
+              # 同时清理 K8s 中可能存在的 NotReady 节点
+              kubectl delete node "$NODE_NAME" --ignore-not-found 2>/dev/null || true
+            else
+              echo "   Instance $INSTANCE_ID still bootstrapping (age=${AGE}s < 300s)"
+            fi
+          fi
+        fi
+      done
+    fi
+
+    # =========================================================
     # 3. Ban 检测 - 处理被封禁的节点
     # =========================================================
     # py-crawler 被 ban 后会写死亡报告到 Redis

@@ -85,9 +85,41 @@ curl -sfL https://get.k3s.io | \
   K3S_TOKEN="$K3S_TOKEN" \
   sh -s - agent
 
-# 等待 K3s Agent 启动
-sleep 30
-echo "K3s Agent started"
+# 等待 K3s Agent 启动并验证加入成功
+echo "Waiting for K3s Agent to join cluster..."
+MAX_WAIT=180  # 3 分钟超时
+WAITED=0
+JOINED=false
+
+while [ $WAITED -lt $MAX_WAIT ]; do
+  # 检查 k3s-agent 服务状态
+  if systemctl is-active --quiet k3s-agent; then
+    # 检查是否能连接到 server
+    if journalctl -u k3s-agent --since "1 minute ago" 2>/dev/null | grep -q "Node.*registered"; then
+      JOINED=true
+      echo "K3s Agent successfully joined the cluster"
+      break
+    fi
+  fi
+  sleep 10
+  WAITED=$((WAITED + 10))
+  echo "  Waiting for K3s Agent... (${WAITED}s/${MAX_WAIT}s)"
+done
+
+# 如果加入失败，自我终止避免成为僵尸
+if [ "$JOINED" = "false" ]; then
+  echo "ERROR: K3s Agent failed to join cluster after ${MAX_WAIT}s"
+  echo "Self-terminating to avoid becoming a zombie instance..."
+  # 记录日志便于排查
+  journalctl -u k3s-agent --no-pager -n 50 || true
+  # 清理 Tailscale
+  tailscale logout || true
+  # 自我终止
+  aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$AWS_REGION" || true
+  exit 1
+fi
+
+echo "K3s Agent started successfully"
 
 # =====================================================
 # 3. Tailscale 清理 (Shutdown Hook)
