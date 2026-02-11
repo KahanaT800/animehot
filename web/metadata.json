@@ -1,0 +1,8 @@
+{
+  "name": "Anime Hot - IP Liquidity Terminal",
+  "description": "A high-performance market liquidity terminal for anime IPs, featuring real-time data visualization, trend analysis, and a cyberpunk-inspired interface.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

@@ -98,8 +98,9 @@ func NewServer(
 
 	// 静态文件服务
 	if cfg.StaticDir != "" {
-		router.Static("/static", cfg.StaticDir)
+		router.Static("/assets", cfg.StaticDir+"/assets")
 		router.StaticFile("/", cfg.StaticDir+"/index.html")
+		router.StaticFile("/favicon.ico", cfg.StaticDir+"/favicon.ico")
 		router.NoRoute(func(c *gin.Context) {
 			c.File(cfg.StaticDir + "/index.html")
 		})

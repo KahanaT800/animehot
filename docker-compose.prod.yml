@@ -168,7 +168,7 @@ services:
       - "8080"
       - "2112"
     volumes:
-      - ./web:/app/web:ro
+      - ./web/dist:/app/web:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 10s

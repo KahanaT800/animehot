@@ -79,6 +79,46 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Frontend
+        run: |
+          cd web
+          npm ci
+          npm run build
+
+      - name: Git Pull on EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/animehot
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p web/dist
+
+      - name: Copy Frontend to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "web/dist"
+          target: "~/animehot/web"
+          strip_components: 1
+
       - name: Deploy Analyzer to EC2
         uses: appleboy/ssh-action@v1.0.3
         env:
@@ -101,18 +141,12 @@ jobs:
 
             cd ~/animehot
 
-            # 1. 拉取最新代码 (不拉取子模块，部署只需要 compose 配置)
-            echo "[1/4] 拉取最新代码..."
-            git fetch origin main
-            git reset --hard origin/main
-            # 注意：不执行 submodule update，因为部署只需要 Docker 镜像，不需要源码
-
-            # 2. 登录 GHCR
-            echo "[2/4] 登录 GHCR..."
+            # 1. 登录 GHCR
+            echo "[1/3] 登录 GHCR..."
             echo "$GHCR_TOKEN" | docker login ghcr.io -u $GHCR_USER --password-stdin
 
-            # 3. 拉取并重启 Analyzer
-            echo "[3/4] 重启 Analyzer..."
+            # 2. 拉取并重启 Analyzer
+            echo "[2/3] 重启 Analyzer..."
             docker pull $ANALYZER_IMAGE
             export ANALYZER_IMAGE=$ANALYZER_IMAGE
 
@@ -122,8 +156,8 @@ jobs:
             # 只重启 analyzer（不再启动 py-crawler）
             docker compose -f docker-compose.prod.yml up -d analyzer
 
-            # 4. 健康检查
-            echo "[4/4] 等待 Analyzer 健康..."
+            # 3. 健康检查
+            echo "[3/3] 等待 Analyzer 健康..."
             for i in $(seq 1 12); do
               if docker exec animehot-analyzer wget -qO- http://127.0.0.1:8080/health 2>/dev/null | grep -q '"status":"ok"'; then
                 echo "✅ Analyzer 健康检查通过 (${i}次尝试)"
