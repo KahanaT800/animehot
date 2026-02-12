@@ -313,10 +313,14 @@ func (p *Pipeline) processResult(ctx context.Context, resp *pb.CrawlResponse) er
 		return nil
 	}
 
-	// 如果有错误消息，记录但继续处理
+	// 如果有错误消息，记录并跳过处理
 	if resp.ErrorMessage != "" && resp.ErrorMessage != "no_items" {
-		// 爬虫报告错误，可能是页面加载失败等
-		// 记录但不作为管道错误
+		slog.Warn("crawler reported error, skipping processing",
+			slog.Uint64("ip_id", resp.IpId),
+			slog.String("task_id", resp.GetTaskId()),
+			slog.String("error_message", resp.ErrorMessage),
+			slog.Int("items", len(resp.GetItems())),
+			slog.Int("pages_crawled", int(resp.GetPagesCrawled())))
 		return nil
 	}
 

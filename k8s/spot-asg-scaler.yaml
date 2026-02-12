@@ -223,7 +223,10 @@ data:
             --output text 2>/dev/null || echo "")
 
           if [ -n "$LAUNCH_TIME" ] && [ "$LAUNCH_TIME" != "None" ]; then
-            LAUNCH_EPOCH=$(date -d "$LAUNCH_TIME" +%s 2>/dev/null || echo "0")
+            # BusyBox date doesn't support ISO 8601, use jq instead
+            LAUNCH_EPOCH=$(echo "$LAUNCH_TIME" | jq -Rr '
+              sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601
+            ' 2>/dev/null || echo "0")
             NOW=$(date +%s)
             AGE=$((NOW - LAUNCH_EPOCH))
 
