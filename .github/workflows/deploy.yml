@@ -227,7 +227,12 @@ jobs:
               exit 0
             fi
 
-            # 更新镜像
+            # 先 apply 完整 YAML (更新 dnsPolicy 等 spec 字段)
+            # git pull 已在 deploy-analyzer 中完成
+            echo "应用 K8s 清单..."
+            $KUBECTL apply -f ~/animehot/k8s/py-crawler.yaml
+
+            # 更新镜像 (覆盖 YAML 中的 :latest 为具体 SHA tag)
             echo "更新 Deployment 镜像..."
             $KUBECTL set image deployment/py-crawler \
               py-crawler=$PY_CRAWLER_IMAGE \
