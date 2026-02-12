@@ -53,6 +53,10 @@ spec:
       terminationGracePeriodSeconds: 60
       # imagePullSecrets 不需要，镜像是公开的
 
+      # 使用节点 DNS (AWS VPC DNS) 而非 CoreDNS
+      # py-crawler 不需要集群 DNS: Redis 用 Tailscale IP, api.mercari.jp 用外部 DNS
+      dnsPolicy: Default
+
       # 调度到 Spot 节点
       affinity:
         nodeAffinity:
